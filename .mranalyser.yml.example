@@ -1,0 +1,24 @@
+review:
+  ignoredPaths:
+    - "*.lock"
+    - "generated/**"
+    - "vendor/**"
+
+  ignoredCategories:
+    - "CODE_STYLE"
+
+  minimumConfidence: 0.60
+
+limits:
+  maxDiffLines: 5000
+  maxFileLines: 1500
+
+llm:
+  provider: openai
+  model: gpt-4o-mini
+
+# examples:
+# llm:
+#   provider: ollama
+#   model: llama3.1:8b
+#   url: http://localhost:11434

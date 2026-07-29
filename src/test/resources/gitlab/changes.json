@@ -1,0 +1,12 @@
+{
+  "changes": [
+    {
+      "old_path": "src/main/kotlin/PaymentService.kt",
+      "new_path": "src/main/kotlin/PaymentService.kt",
+      "diff": "@@ -1,2 +1,4 @@\n class PaymentService\n+val token=\"abc\"\n+println(\"debug\")",
+      "newFile": false,
+      "deletedFile": false,
+      "renamedFile": false
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "id": 999,
+  "iid": 123,
+  "title": "Implement Redis fallback",
+  "description": "Adds fallback when cache is down",
+  "author": {
+    "id": 1,
+    "name": "Gabriel",
+    "username": "gabriel"
+  },
+  "source_branch": "feature/redis-fallback",
+  "target_branch": "main",
+  "labels": ["backend"],
+  "state": "opened",
+  "reviewers": [
+    {"id": 2, "name": "Reviewer", "username": "reviewer"}
+  ]
+}
