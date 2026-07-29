@@ -1,10 +1,20 @@
+# Build
 .gradle/
 build/
 out/
+.bootstrap/
+.kotlin/
+
+# IDE
 .idea/
 *.iml
-.gradle/
+
+# Segredos / configuração local
 local.properties
 .mranalyser.properties
-.DS_Store
+.mranalyser.propertiesclear
+.mranalyser.yml
 .mranalyser.yml.example
+
+# SO
+.DS_Store
