@@ -1,0 +1,429 @@
+📋 MR REVIEW REPORT
+────────────────────────────────────────────────────────
+
+MR !1 — First implementation of invoice-core-v2
+Autor: Ronin
+Branch: feat/initial-implementation → master
+Arquivos alterados: 50
++2415 / -58
+
+────────────────────────────────────────────────────────
+
+ENTENDIMENTO DA ALTERAÇÃO
+
+   Este Merge Request estabelece a base para a reescrita do invoice-core em Java/Spring Boot. Ele inclui uma estrutura de aplicação em camadas hexagonais, configurações de banco de dados, integração com GCP Pub/Sub, tratamento de erros via RFC 7807, e outras convenções de API. A implementação é executável e conectada ao banco de dados, mas ainda não inclui funcionalidades de negócios específicas.
+
+   Alcance da mudança: serviço
+   Motivo: A alteração afeta a estrutura e configuração de um serviço específico, sem impactar outros serviços ou módulos.
+
+   Comportamento alterado:
+   - A aplicação passa a usar Spring Boot 4.1 e Java 25.
+   - Adicionado suporte a PostgreSQL 18 com Flyway para migração de esquema.
+   - Implementado gerenciamento de identificadores UUIDv7.
+   - Configurado health checks via Actuator com probes de liveness e readiness.
+
+   Novos caminhos de execução:
+   - Novo caminho para lidar com exceções globais através de GlobalExceptionHandler.
+   - Novo caminho para publicação de mensagens através de MessagePublisher.
+   - Novo caminho para consumo de mensagens através de AbstractPubSubConsumer.
+
+   Contratos alterados:
+   - Contrato alterado: adição de endpoints REST com URI versioning.
+   - Contrato alterado: uso de RFC 7807 para tratamento de erros.
+   - Contrato alterado: configuração de mensageria via PubSubProperties.
+
+   Dependências afetadas:
+   - Dependência externa afetada: Spring Boot 4.1.
+   - Dependência externa afetada: Spring Cloud GCP.
+   - Dependência externa afetada: PostgreSQL 18.
+   - Dependência externa afetada: Testcontainers.
+
+────────────────────────────────────────────────────────
+
+MUDANÇAS ESTRUTURAIS DETECTADAS
+
+   • alteração de configuração
+     - configuração alterada (+3/-0) (.mvn/wrapper/maven-wrapper.properties)
+     - configuração alterada (+26/-0) (src/main/java/com/ctbz/billing/invoice/infrastructure/config/LocalGcpConfig.java)
+     - configuração alterada (+13/-0) (src/main/resources/application-dev.yml)
+     - configuração alterada (+18/-0) (src/main/resources/application-local.yml)
+     - ... (5 ocorrência(s) adicional(is))
+   • novo endpoint
+     - novo endpoint exposto (src/main/java/com/ctbz/billing/invoice/api/CONTROLLERS.md)
+   • novo producer
+     - publicação de evento/mensagem adicionada ou alterada (src/main/java/com/ctbz/billing/invoice/application/messaging/MessagePublisher.java)
+     - publicação de evento/mensagem adicionada ou alterada (src/main/java/com/ctbz/billing/invoice/infrastructure/messaging/publishers/PUBLISHERS.md)
+     - publicação de evento/mensagem adicionada ou alterada (src/main/java/com/ctbz/billing/invoice/infrastructure/messaging/PubSubMessagePublisher.java)
+     - publicação de evento/mensagem adicionada ou alterada (src/test/java/com/ctbz/billing/invoice/infrastructure/messaging/PubSubMessagingIntegrationTest.java)
+   • novo consumer
+     - consumer de mensageria adicionado ou alterado (src/main/java/com/ctbz/billing/invoice/infrastructure/messaging/AbstractPubSubConsumer.java)
+     - consumer de mensageria adicionado ou alterado (src/test/java/com/ctbz/billing/invoice/infrastructure/messaging/PubSubMessagingIntegrationTest.java)
+   • nova migration
+     - nova migration (src/main/resources/db/migration/.gitkeep)
+   • alteração de timeout
+     - timeout definido/alterado: connection-timeout: 3000  # fail fast (3s) when the pool is exhausted (src/main/resources/application.yml)
+     - timeout definido/alterado: validation-timeout: 2000  # must be < connection-timeout (src/main/resources/application.yml)
+   • novo client externo
+     - novo client HTTP/externo (mvnw.cmd)
+   • nova dependência
+     - dependência adicionada: spring-boot-starter-parent (pom.xml)
+     - dependência adicionada: invoice-core-v2 (pom.xml)
+     - dependência adicionada: spring-cloud-gcp-dependencies (pom.xml)
+     - dependência adicionada: spring-boot-starter-web (pom.xml)
+     - ... (6 ocorrência(s) adicional(is))
+
+────────────────────────────────────────────────────────
+
+PONTOS QUE EU REVISARIA NO MR
+
+🔴 SOLICITARIA AJUSTE
+
+1. [CRITICAL/BUG] src/main/resources/application-local.yml:11 Credencial literal adicionada em `password`
+
+   A linha adicionada atribui um valor literal a `password`, padrão típico de credencial versionada no repositório.
+
+   Evidência:
+   src/main/resources/application-local.yml:11 atribui literal a `password` (valor omitido deste relatório).
+
+   Cenário de falha:
+   1. o valor é versionado no repositório
+   2. qualquer pessoa com acesso ao histórico do Git obtém a credencial
+   3. remover a linha depois não invalida o segredo, que permanece no histórico
+   4. acesso indevido ao recurso protegido por essa credencial.
+
+   Impacto: Vazamento de credencial com acesso ao ambiente e aos dados protegidos por ela.
+
+   O que avaliar: Remover o valor do código, mover para variável de ambiente ou cofre de segredos e **rotacionar a credencial**, já que ela está no histórico do Git.
+
+   Comentário sugerido:
+   > Esse valor de `password` parece ser uma credencial literal. Podemos movê-lo para variável de ambiente ou cofre? Como já entrou no histórico do Git, vale rotacionar a credencial mesmo depois de remover a linha.
+
+   [confiança 90% | categoria Segurança | bloqueia o merge]
+
+🟡 QUESTIONARIA
+
+2. [MEDIUM/QUESTION] .gitlab-ci.yml:1 Inclusão de pipeline externo
+
+   O arquivo .gitlab-ci.yml inclui uma inclusão de um componente externo. É necessário verificar se essa inclusão é segura e se está alinhada com as políticas de segurança do projeto.
+
+   Evidência:
+   .gitlab-ci.yml:1 include: - component: $CI_SERVER_FQDN/ctbz/devops/recursos/pipeline/ci-cd@$PIPE_COMPONENT_VERSION
+
+   Cenário de falha:
+   1. O componente externo contém vulnerabilidades não detectadas
+   2. A inclusão do componente externo causa conflitos com as configurações existentes
+   3. O pipeline falha devido a problemas de compatibilidade.
+
+   Impacto: Pode levar a vulnerabilidades de segurança ou falhas no pipeline de CI/CD.
+
+   O que avaliar: Verificar a segurança e a compatibilidade do componente externo antes de incluí-lo no pipeline.
+
+   Comentário sugerido:
+   > Neste arquivo, estamos incluindo um componente externo no pipeline. Como garantimos que esse componente é seguro e compatível com as configurações existentes? Precisamos verificar a segurança e a compatibilidade antes de aprovar.
+
+   [confiança 85% | categoria Arquitetura | não bloqueia]
+
+3. [MEDIUM/QUESTION] Dockerfile:37 Entrypoint com secrets-init
+
+   O Dockerfile define um entrypoint que usa o comando /tmp/bin/secrets-init. É necessário verificar se esse comando está protegido e se os segredos são gerenciados de forma segura.
+
+   Evidência:
+   Dockerfile:37 ENTRYPOINT ["/tmp/bin/secrets-init", "--provider", "google"]
+
+   Cenário de falha:
+   1. O comando /tmp/bin/secrets-init é comprometido
+   2. Os segredos não são carregados corretamente
+   3. A aplicação falha devido a problemas de autenticação.
+
+   Impacto: Pode levar a exposição de segredos ou falhas na autenticação.
+
+   O que avaliar: Verificar a segurança do comando /tmp/bin/secrets-init e garantir que os segredos sejam gerenciados corretamente.
+
+   Comentário sugerido:
+   > Neste Dockerfile, estamos usando o entrypoint /tmp/bin/secrets-init. Como garantimos que esse comando é seguro e que os segredos são carregados corretamente? Precisamos verificar a segurança do comando antes de aprovar.
+
+   [confiança 85% | categoria Segurança | não bloqueia]
+
+4. [MEDIUM/QUESTION] pom.xml:19 Dependências externas
+
+   O arquivo pom.xml inclui várias dependências externas. É necessário verificar se essas dependências estão alinhadas com as políticas de segurança e se não há sobreposição ou conflitos entre elas.
+
+   Evidência:
+   pom.xml:19 <groupId>org.springframework.boot</groupId>
+
+   Cenário de falha:
+   1. Alguma dependência externa contém vulnerabilidades não detectadas
+   2. Há sobreposição ou conflitos entre as dependências
+   3. A aplicação falha devido a problemas de compatibilidade.
+
+   Impacto: Pode levar a vulnerabilidades de segurança ou falhas na aplicação.
+
+   O que avaliar: Verificar a segurança e a compatibilidade das dependências externas antes de incluí-las no projeto.
+
+   Comentário sugerido:
+   > Neste pom.xml, estamos incluindo várias dependências externas. Como garantimos que essas dependências são seguras e compatíveis entre si? Precisamos verificar a segurança e a compatibilidade antes de aprovar.
+
+   [confiança 85% | categoria Arquitetura | não bloqueia]
+
+5. [MEDIUM/RISK] src/main/java/com/ctbz/billing/invoice/application/messaging/MessagePublisher.java:41 Possível falha na publicação de mensagens
+
+   A implementação atual do MessagePublisher e PubSubMessagePublisher pode não garantir a consistência em caso de falha na publicação de mensagens.
+
+   Evidência:
+   src/main/java/com/ctbz/billing/invoice/application/messaging/MessagePublisher.java:41 — public String publish(String topic, Object payload, Map<String, String> attributes);
+src/main/java/com/ctbz/billing/invoice/infrastructure/messaging/PubSubMessagePublisher.java:45 — byte[] data = objectMapper.writeValueAsBytes(payload);
+
+   Cenário de falha:
+   1. A mensagem é serializada e publicada no Pub/Sub
+   2. Se a publicação falhar, a exceção MessagePublishException é lançada
+   3. A consistência entre o estado local e o Pub/Sub pode ser comprometida.
+
+   Impacto: Pode resultar em inconsistências de dados entre o sistema local e o Pub/Sub.
+
+   O que avaliar: Garantir que a publicação de mensagens seja transacional ou implementar uma estratégia de compensação para lidar com falhas.
+
+   Comentário sugerido:
+   > Neste fluxo chamamos publish() antes de persistir a invoice. Como garantimos consistência caso o pagamento seja confirmado e o save() falhe depois? Talvez valha tratar esse cenário explicitamente ou garantir idempotência.
+
+   [confiança 85% | categoria Transação | não bloqueia]
+
+6. [LOW/QUESTION] mvnw.cmd:130 Verificação de integridade do download do Maven
+
+   O script verifica a integridade do download do Maven usando o SHA-256, mas não há evidência de que essa verificação seja realizada em todos os casos.
+
+   Evidência:
+   mvnw.cmd:130 $webclient.DownloadFile($distributionUrl, "$TMP_DOWNLOAD_DIR/$distributionUrlName") | Out-Null
+
+   Cenário de falha:
+   1. O download do Maven é interceptado ou corrompido
+   2. A verificação de SHA-256 não é realizada ou falha silenciosamente
+   3. Um Maven comprometido é instalado.
+
+   Impacto: Risco de instalação de uma versão comprometida do Maven.
+
+   O que avaliar: Verificar se a verificação de integridade está sendo realizada em todos os casos e garantir que falhas sejam tratadas adequadamente.
+
+   Comentário sugerido:
+   > Neste script, o download do Maven é verificado usando SHA-256. Como garantimos que essa verificação seja realizada em todos os casos e que falhas sejam tratadas adequadamente? Talvez valha adicionar mais verificações ou logs para confirmar isso.
+
+   [confiança 60% | categoria Arquitetura | não bloqueia]
+
+7. [LOW/QUESTION] src/test/java/com/ctbz/billing/invoice/api/GlobalExceptionHandlerTest.java:14 Teste de GlobalExceptionHandler
+
+   O teste verifica se a exceção inesperada é mapeada corretamente para um ProblemDetail com status 500. É necessário verificar se outros tipos de exceções são tratadas adequadamente.
+
+   Evidência:
+   GlobalExceptionHandlerTest.java:14 chama handler.handleUnexpected(new RuntimeException("boom")).
+
+   Impacto: Outros tipos de exceções não são tratadas corretamente.
+
+   O que avaliar: Verificar se outros tipos de exceções são tratadas corretamente e adicionar testes para esses casos.
+
+   Comentário sugerido:
+   > Neste teste, estamos verificando apenas RuntimeException. Seria útil cobrir outros tipos de exceções que podem ocorrer. Podemos adicionar mais testes para garantir que todas as exceções sejam tratadas corretamente?
+
+   [confiança 60% | categoria Testes | não bloqueia]
+
+8. [LOW/QUESTION] src/test/java/com/ctbz/billing/invoice/infrastructure/messaging/PubSubMessagingIntegrationTest.java:104 Teste de integração de PubSub
+
+   O teste verifica se uma mensagem é publicada e consumida corretamente. É necessário verificar se o cenário de falha na publicação ou consumo é tratado adequadamente.
+
+   Evidência:
+   PubSubMessagingIntegrationTest.java:104 chama messagePublisher.publish("testTopic", sent, Map.of("origin", "test")).
+
+   Impacto: Cenários de falha na publicação ou consumo de mensagens não são tratados corretamente.
+
+   O que avaliar: Adicionar testes para cenários de falha na publicação ou consumo de mensagens.
+
+   Comentário sugerido:
+   > Este teste verifica apenas o fluxo feliz da publicação e consumo de mensagens. Seria útil adicionar testes para cenários em que a publicação ou consumo falha. Podemos tratar esses casos explicitamente nos testes?
+
+   [confiança 60% | categoria Testes | não bloqueia]
+
+🔵 SUGESTÕES
+
+9. [MEDIUM/RISK] src/main/resources/application-local.yml:11 Credenciais de banco de dados em arquivo versionado
+
+   As credenciais do banco de dados estão hardcoded no arquivo application-local.yml, o que pode levar a exposição de segredos se o código for comprometido ou exposto publicamente.
+
+   Evidência:
+   src/main/resources/application-local.yml:11 spring.datasource.password : <REDACTED>
+
+   Cenário de falha:
+   1. O repositório é comprometido
+   2. As credenciais hardcoded são expostas
+   3. A base de dados pode ser acessada por atacantes.
+
+   Impacto: Exposição de segredos e potencial acesso não autorizado à base de dados.
+
+   O que avaliar: Remova as credenciais hardcoded e use variáveis de ambiente ou um gerenciador de segredos para armazenar as credenciais de forma segura.
+
+   Comentário sugerido:
+   > As credenciais do banco de dados estão hardcoded no application-local.yml. Por favor, remova-as e use variáveis de ambiente ou um gerenciador de segredos para armazenar as credenciais de forma segura.
+
+   [confiança 95% | categoria Segurança | não bloqueia]
+
+10. [MEDIUM/RISK] src/main/java/com/ctbz/billing/invoice/api/GlobalExceptionHandler.java:25 Tratamento genérico de exceções
+
+   O método handleUnexpected captura todas as exceções sem distinção, o que pode ocultar problemas específicos e dificultar a depuração.
+
+   Evidência:
+   GlobalExceptionHandler.java:25 chama handleUnexpected(Exception ex)
+
+   Cenário de falha:
+   1. Uma exceção específica ocorre
+   2. handleUnexpected captura e retorna uma resposta genérica
+   3. Desenvolvedores não conseguem identificar a causa real do erro.
+
+   Impacto: Desenvolvedores podem perder tempo tentando diagnosticar problemas específicos.
+
+   O que avaliar: Adicionar tratamento específico para exceções comuns e documentar as exceções que devem ser capturadas de forma genérica.
+
+   Comentário sugerido:
+   > Neste fluxo, handleUnexpected captura todas as exceções. Como garantimos que não estamos ocultando problemas específicos que precisam de tratamento especial? Talvez valha adicionar tratamento específico para exceções comuns ou documentar melhor quais exceções devem ser capturadas de forma genérica.
+
+   [confiança 85% | categoria Confiabilidade | não bloqueia]
+
+11. [MEDIUM/RISK] src/main/java/com/ctbz/billing/invoice/application/messaging/MessagePublisher.java:41 Possível falha na publicação de mensagens
+
+   O método publish() pode lançar MessagePublishException se a publicação falhar, mas não há garantia de que todas as falhas sejam tratadas adequadamente.
+
+   Evidência:
+   src/main/java/com/ctbz/billing/invoice/application/messaging/MessagePublisher.java:41 chama pubSubTemplate.publish() e pode lançar MessagePublishException
+
+   Cenário de falha:
+   1. pubSubTemplate.publish() falha
+   2. MessagePublishException é lançada
+   3. O chamador não trata adequadamente a exceção.
+
+   Impacto: A mensagem pode não ser publicada corretamente, causando perda de dados ou inconsistência no sistema.
+
+   O que avaliar: Garantir que o chamador do publish() trate adequadamente a MessagePublishException e tente novamente se necessário.
+
+   Comentário sugerido:
+   > Neste fluxo, o publish() pode lançar MessagePublishException. Como garantimos que todas as falhas sejam tratadas adequadamente? Talvez valha adicionar mais lógica de retry ou garantir que o chamador trate a exceção corretamente.
+
+   [confiança 85% | categoria Confiabilidade | não bloqueia]
+
+12. [MEDIUM/RISK] src/main/resources/application.yml:29 Timeout de conexão curto sem retry
+
+   O timeout de conexão está definido como 3000ms, o que pode levar a falhas rápidas se o pool de conexões estiver esgotado. Não há evidência de configuração de retry.
+
+   Evidência:
+   src/main/resources/application.yml:29 connection-timeout: 3000
+
+   Cenário de falha:
+   1. O pool de conexões está esgotado
+   2. A chamada à base de dados falha com timeout
+   3. A operação é interrompida sem retry.
+
+   Impacto: Falhas rápidas e possíveis interrupções de serviços devido à falta de retry.
+
+   O que avaliar: Adicione configuração de retry para lidar com falhas de conexão temporárias.
+
+   Comentário sugerido:
+   > O timeout de conexão está definido como 3000ms. Como estamos lidando com falhas de conexão temporárias? Talvez valha adicionar configuração de retry.
+
+   [confiança 85% | categoria Confiabilidade | não bloqueia]
+
+13. [MEDIUM/RISK] settings.xml:6 Credenciais Maven expostas em variáveis de ambiente
+
+   As credenciais Maven estão sendo armazenadas em variáveis de ambiente, o que pode ser inseguro se essas variáveis não forem protegidas adequadamente.
+
+   Evidência:
+   settings.xml:6 <username>${env.MAVEN_USERNAME}</username>
+
+   Cenário de falha:
+   1. Um ator malicioso acessa as variáveis de ambiente
+   2. O ator obtém as credenciais Maven
+   3. O ator usa as credenciais para acessar repositórios privados.
+
+   Impacto: Perda de segurança, acesso não autorizado a repositórios privados.
+
+   O que avaliar: Armazenar credenciais em segredos gerenciados ou usar autenticação baseada em tokens.
+
+   Comentário sugerido:
+   > As credenciais Maven estão sendo armazenadas em variáveis de ambiente. Como garantimos que essas variáveis estejam protegidas e não sejam expostas em ambientes não seguros?
+
+   [confiança 85% | categoria Segurança | não bloqueia]
+
+✅ PONTOS TECNICAMENTE ADEQUADOS
+
+   - Estrutura de aplicação em camadas hexagonais bem definida.
+   - Suporte a PostgreSQL 18 com Flyway para migração de esquema.
+   - Implementação de gerenciamento de identificadores UUIDv7.
+   - Configuração de health checks via Actuator com probes de liveness e readiness.
+   - Estrutura de aplicação em camadas hexagonais bem definida
+   - Configurações de banco de dados e integração com GCP configuradas corretamente
+   - Tratamento de erros via RFC 7807 implementado
+   - Suporte a PostgreSQL 18 com Flyway para migração de esquema
+   - Implementação de tratamento de erros via RFC 7807
+   - Configuração de banco de dados com Flyway
+   - Integração com GCP Pub/Sub
+   - Estrutura de aplicação em camadas hexagonais
+   - A estrutura inicial do invoice-core-v2 está bem organizada e segue as convenções de projeto estabelecidas.
+   - O suporte a GCP Pub/Sub é implementado de forma modular e pode ser facilmente adaptado para outros provedores de mensageria.
+   - A estrutura de aplicação em camadas hexagonais é bem definida.
+   - Configurações de banco de dados e integração com GCP Pub/Sub estão corretamente configuradas.
+   - Configuração de banco de dados com Flyway para migração de esquema.
+   - Gerenciamento de identificadores UUIDv7 implementado corretamente.
+   - Adição de testes unitários e integração para garantir a qualidade da aplicação.
+   - Configurações específicas para o GCP e PostgreSQL, facilitando a integração com essas plataformas.
+   - Testes de arquitetura para garantir que as camadas da aplicação estejam corretamente isoladas.
+   - A estrutura do projeto segue uma arquitetura hexagonal, o que promove a desacoplamento e a manutenabilidade.
+   - O uso de Spring Boot 4.1 e Java 25 é alinhado com as últimas versões do ecossistema Spring.
+   - A configuração de health checks via Actuator é uma prática recomendada para monitoramento e operações.
+   - A estrutura do projeto segue uma arquitetura hexagonal, com clara separação de camadas e responsabilidades.
+   - A documentação de decisões arquitetônicas (ADRs) está bem detalhada e imutável uma vez aceita.
+   - A configuração de health checks via Actuator é adequada, com probes liveness, readiness e startup configurados corretamente.
+   - A estrutura em camadas hexagonais é bem definida e fortemente tipada.
+   - A integração com o GCP e PostgreSQL está configurada corretamente.
+   - O tratamento de erros via RFC 7807 é implementado de forma consistente.
+
+────────────────────────────────────────────────────────
+
+PERGUNTAS AO AUTOR
+
+   1. Como garantimos que todas as exceções críticas sejam tratadas adequadamente e não sejam simplesmente capturadas de forma genérica?
+   2. Como garantimos a idempotência dos consumidores de mensagens em cenários de falha e redelivery?
+   3. O que aconteceria se a migração do banco de dados falhar? Como garantimos a reversibilidade nesse caso?
+   4. Como estamos lidando com falhas de conexão temporárias no pool de conexões?
+   5. Como garantimos que as configurações de tempo limite definidas em application.yml sejam adequadas para todas as operações de rede e banco de dados?
+   6. Como a aplicação lidará com falhas na publicação de mensagens? Existe uma estratégia de compensação ou retry implementada?
+
+────────────────────────────────────────────────────────
+
+PARECER TÉCNICO
+
+   A implementação está coerente com o objetivo do MR e não identifiquei problemas estruturais no fluxo principal. Há, entretanto, um ponto que merece ajuste antes do merge relacionado à exposição de credenciais em arquivos versionados. Também deixaria dois questionamentos não bloqueantes sobre retry e cobertura de testes.
+
+────────────────────────────────────────────────────────
+PARECER
+
+   REQUEST_CHANGES
+   Existe ao menos um ponto bloqueante com evidência e cenário de falha.
+
+   Bloqueadores: 1
+   Questionamentos: 7
+   Sugestões: 5
+
+   Principal risco:
+   Exposição de credenciais em arquivos versionados pode levar a vazamento de informações sensíveis.
+
+   Confiança da análise: MEDIUM
+────────────────────────────────────────────────────────
+
+QUALIDADE DA ANÁLISE
+
+   Arquivos analisados: 50/50
+   Chunks analisados: 10
+   Contextos relacionados carregados: 0
+   Findings candidatos: 18
+   Descartados por duplicidade: 0
+   Descartados na validação: 6
+   Descartados por confiança: 0
+   Descartados como ruído: 0
+   Findings apresentados: 13
+
+   ⚠️  Etapas não executadas:
+      - contexto do repositório (diretório atual aponta para 'maeverson/mr-analyser', mas o MR é de 'ctbz/billing/invoices/invoice-core-v2')

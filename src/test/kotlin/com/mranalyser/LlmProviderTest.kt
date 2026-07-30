@@ -10,11 +10,14 @@ import com.mranalyser.application.port.LlmProvider
 import com.mranalyser.application.port.LlmPurpose
 import com.mranalyser.application.port.LlmRequest
 import com.mranalyser.application.port.LlmResponse
+import com.mranalyser.application.port.LlmUsage
 import com.mranalyser.infrastructure.llm.AnthropicLlmProvider
 import com.mranalyser.infrastructure.llm.GeminiLlmProvider
+import com.mranalyser.infrastructure.llm.LlmTransportSettings
 import com.mranalyser.infrastructure.llm.NoOpLlmProvider
 import com.mranalyser.infrastructure.llm.OllamaLlmProvider
 import com.mranalyser.infrastructure.llm.OpenAiLlmProvider
+import com.mranalyser.infrastructure.llm.ProgressLoggingLlmProvider
 import com.mranalyser.infrastructure.llm.ResilientLlmProvider
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
@@ -159,6 +162,120 @@ class LlmProviderTest {
         assertTrue(body.contains("\"num_predict\":4096"))
     }
 
+    /**
+     * O streaming é o que permite geração longa em modelo self-hosted: o critério de falha passa a
+     * ser o servidor parar de responder, não a duração total da geração.
+     */
+    @Test
+    fun `ollama deve concatenar os fragmentos do stream`() = runBlocking {
+        server.stubFor(
+            post(urlPathEqualTo("/api/generate")).willReturn(
+                aResponse()
+                    .withHeader("Content-Type", "application/x-ndjson")
+                    .withBody(
+                        """
+                        {"response":"{\"summary\":"}
+                        {"response":"\"ok\"}"}
+                        {"response":"","done":true}
+                        """.trimIndent()
+                    )
+            )
+        )
+
+        val response = OllamaLlmProvider(model = "m", baseUrl = baseUrl()).complete(request)
+
+        assertTrue(response.successful)
+        assertEquals("""{"summary":"ok"}""", response.text)
+        assertTrue(server.allServeEvents.single().request.bodyAsString.contains("\"stream\":true"))
+    }
+
+    /**
+     * `num_ctx` é o parâmetro que decide se o modelo cabe inteiro na GPU, então precisa chegar ao
+     * servidor — e precisa ficar de fora quando não configurado, para não sobrescrever o Modelfile.
+     */
+    @Test
+    fun `ollama deve enviar num_ctx quando configurado`() = runBlocking {
+        server.stubFor(
+            post(urlPathEqualTo("/api/generate")).willReturn(
+                aResponse()
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("""{"response": "ok", "done": true}""")
+            )
+        )
+
+        OllamaLlmProvider(
+            model = "m",
+            baseUrl = baseUrl(),
+            settings = LlmTransportSettings(numCtx = 24_576)
+        ).complete(request)
+
+        assertTrue(server.allServeEvents.single().request.bodyAsString.contains("\"num_ctx\":24576"))
+    }
+
+    @Test
+    fun `ollama nao deve enviar num_ctx quando ausente`() = runBlocking {
+        server.stubFor(
+            post(urlPathEqualTo("/api/generate")).willReturn(
+                aResponse()
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("""{"response": "ok", "done": true}""")
+            )
+        )
+
+        OllamaLlmProvider(model = "m", baseUrl = baseUrl()).complete(request)
+
+        assertFalse(server.allServeEvents.single().request.bodyAsString.contains("num_ctx"))
+    }
+
+    @Test
+    fun `ollama deve reportar o consumo de tokens do chunk final`() = runBlocking {
+        server.stubFor(
+            post(urlPathEqualTo("/api/generate")).willReturn(
+                aResponse()
+                    .withHeader("Content-Type", "application/x-ndjson")
+                    .withBody(
+                        """
+                        {"response":"ok"}
+                        {"response":"","done":true,"prompt_eval_count":19343,"eval_count":1480}
+                        """.trimIndent()
+                    )
+            )
+        )
+
+        val response = OllamaLlmProvider(
+            model = "m",
+            baseUrl = baseUrl(),
+            settings = LlmTransportSettings(numCtx = 24_576)
+        ).complete(request.copy(maxOutputTokens = 3_000))
+
+        val usage = response.usage!!
+        assertEquals(19_343, usage.promptTokens)
+        assertEquals(1_480, usage.outputTokens)
+        assertFalse(usage.exceedsContextWindow(3_000), "19343 + 3000 cabe em 24576")
+        assertTrue(usage.exceedsContextWindow(6_000), "19343 + 6000 não cabe: prompt seria truncado")
+    }
+
+    @Test
+    fun `ollama deve tratar erro no meio do stream como falha`() = runBlocking {
+        server.stubFor(
+            post(urlPathEqualTo("/api/generate")).willReturn(
+                aResponse()
+                    .withHeader("Content-Type", "application/x-ndjson")
+                    .withBody(
+                        """
+                        {"response":"parcial"}
+                        {"error":"model requires more system memory"}
+                        """.trimIndent()
+                    )
+            )
+        )
+
+        val response = OllamaLlmProvider(model = "m", baseUrl = baseUrl()).complete(request)
+
+        assertFalse(response.successful)
+        assertTrue(response.failure!!.contains("more system memory"))
+    }
+
     @Test
     fun `provider indisponivel deve virar falha em vez de excecao`() = runBlocking {
         val url = baseUrl()
@@ -247,5 +364,34 @@ class ResilientLlmProviderTest {
             calls++
             return response
         }
+    }
+}
+
+/**
+ * O decorator não pode alterar a resposta: ele só existe para dar sinal de vida durante uma
+ * dezena de chamadas sequenciais que somam minutos cada.
+ */
+class ProgressLoggingLlmProviderTest {
+    private val request = LlmRequest(LlmPurpose.LOCAL_REVIEW, "s", "u", label = "chunk 3/10 (DOMAIN)")
+
+    @Test
+    fun `deve repassar sucesso e falha sem alterar a resposta`() = runBlocking {
+        val success = LlmResponse("conteúdo", usage = LlmUsage(promptTokens = 12_300, outputTokens = 1_480))
+        assertEquals(success, ProgressLoggingLlmProvider(FixedProvider(success)).complete(request))
+
+        val failure = LlmResponse.failed("ollama indisponível: SocketTimeoutException")
+        assertEquals(failure, ProgressLoggingLlmProvider(FixedProvider(failure)).complete(request))
+    }
+
+    @Test
+    fun `nao deve quebrar quando o provider nao reporta consumo`() = runBlocking {
+        val response = ProgressLoggingLlmProvider(FixedProvider(LlmResponse("sem usage"))).complete(request)
+
+        assertTrue(response.successful)
+    }
+
+    private class FixedProvider(private val response: LlmResponse) : LlmProvider {
+        override val name: String = "fixed"
+        override suspend fun complete(request: LlmRequest): LlmResponse = response
     }
 }

@@ -27,6 +27,7 @@ class ConfigShowCommand : CliktCommand(name = "show") {
         echo("MR_ANALYSER_LLM_MAX_RETRIES=${config.llm.maxRetries}")
         echo("MR_ANALYSER_LLM_JSON_MODE=${config.llm.jsonMode}")
         echo("MR_ANALYSER_LLM_MAX_TOKENS=${config.llm.maxOutputTokensReview}")
+        echo("MR_ANALYSER_LLM_NUM_CTX=${config.llm.numCtx ?: "<default do provider>"}")
         echo("MR_ANALYSER_MAX_CONCURRENCY=${config.maxConcurrency}")
         echo()
         echo("review.minimumConfidence=${config.review.minimumConfidence}")

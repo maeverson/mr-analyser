@@ -18,3 +18,4 @@ local.properties
 
 # SO
 .DS_Store
+bin/

@@ -24,7 +24,14 @@ data class LlmConfig(
      */
     val jsonMode: Boolean = false,
     val maxOutputTokensReview: Int = 6_000,
-    val maxOutputTokensAssessment: Int = 2_000
+    val maxOutputTokensAssessment: Int = 2_000,
+    /**
+     * Janela de contexto pedida ao provider self-hosted. Dimensioná-la é o que decide se o modelo
+     * cabe inteiro na VRAM: `num_ctx` grande demais gasta no KV cache a memória que faltaria para
+     * as camadas, e o servidor passa a rodar parte do modelo na CPU — uma diferença medida de
+     * 5,9 para 31,6 tok/s em um 14B Q4 numa RTX 3060.
+     */
+    val numCtx: Int? = null
 )
 
 data class ReviewConfig(

@@ -22,9 +22,29 @@ data class LlmRequest(
     val label: String = ""
 )
 
+/**
+ * Consumo reportado pelo fornecedor. Só existe para observabilidade: é o que permite distinguir
+ * "o modelo está lento" de "o processo travou" — a diferença que, sem log, custou uma hora de
+ * espera às cegas.
+ */
+data class LlmUsage(
+    val promptTokens: Int,
+    val outputTokens: Int,
+    /** Janela de contexto usada na chamada, quando o transporte a define explicitamente. */
+    val contextWindow: Int? = null
+) {
+    /**
+     * Ollama trunca o prompt em silêncio para caber em `num_ctx`, e prompt truncado degrada a
+     * revisão sem sinal algum. Se prompt + saída não cabem na janela, houve (ou quase houve) corte.
+     */
+    fun exceedsContextWindow(maxOutputTokens: Int): Boolean =
+        contextWindow != null && promptTokens + maxOutputTokens > contextWindow
+}
+
 data class LlmResponse(
     val text: String,
-    val failure: String? = null
+    val failure: String? = null,
+    val usage: LlmUsage? = null
 ) {
     val successful: Boolean get() = failure == null && text.isNotBlank()
 

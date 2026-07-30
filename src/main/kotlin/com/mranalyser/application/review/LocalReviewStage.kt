@@ -29,18 +29,30 @@ class LocalReviewStage(
     suspend fun run(
         inputs: List<ChunkReviewInput>,
         diagnostics: AnalysisDiagnostics
-    ): List<LlmReviewResult> = coroutineScope {
+    ): List<LlmReviewResult> {
         if (inputs.isEmpty()) {
-            return@coroutineScope emptyList()
+            return emptyList()
         }
 
-        val semaphore = Semaphore(maxConcurrency.coerceAtLeast(1))
+        val concurrency = maxConcurrency.coerceAtLeast(1)
 
-        inputs.map { input ->
-            async(Dispatchers.IO) {
-                semaphore.withPermit { reviewChunk(input, diagnostics) }
-            }
-        }.awaitAll().filterNotNull()
+        // Com um provider que serializa as chamadas (Ollama), o fan-out não rende throughput e
+        // custa legibilidade: o `Semaphore` garante exclusão mútua, não ordem de entrada, então o
+        // progresso sairia embaralhado ("chunk 2", "chunk 3", ..., "chunk 1"). Percorrer em ordem
+        // dá o mesmo tempo total e um log que acompanha a análise.
+        if (concurrency == 1) {
+            return inputs.mapNotNull { reviewChunk(it, diagnostics) }
+        }
+
+        return coroutineScope {
+            val semaphore = Semaphore(concurrency)
+
+            inputs.map { input ->
+                async(Dispatchers.IO) {
+                    semaphore.withPermit { reviewChunk(input, diagnostics) }
+                }
+            }.awaitAll().filterNotNull()
+        }
     }
 
     private suspend fun reviewChunk(

@@ -109,12 +109,42 @@ MR_ANALYSER_LLM_URL=https://api.openai.com/v1
 MR_ANALYSER_MAX_CONCURRENCY=4
 ```
 
+### Ollama self-hosted
+
+Duas configurações determinam se a análise leva minutos ou horas, e as duas precisam concordar
+entre cliente e servidor.
+
+No servidor, `OLLAMA_NUM_PARALLEL` multiplica o KV cache reservado — cada slot paralelo custa um
+`num_ctx` inteiro. Com um runner único atendendo o endpoint, mais de um slot não rende throughput
+e apenas consome a VRAM que faltaria para as camadas do modelo:
+
+```ini
+Environment="OLLAMA_NUM_PARALLEL=1"
+Environment="OLLAMA_FLASH_ATTENTION=1"
+Environment="OLLAMA_KV_CACHE_TYPE=q8_0"
+```
+
+No cliente, `MR_ANALYSER_LLM_NUM_CTX` dimensiona a janela. O valor certo é o maior que ainda deixa
+**todas** as camadas na GPU — verificável em `journalctl -u ollama | grep offloaded`, que deve
+mostrar `offloaded N/N layers to GPU`. Uma única camada na CPU custa caro: num 14B Q4 numa RTX 3060
+de 12 GB, 34/49 camadas renderam 5,9 tok/s contra 31,6 tok/s com 49/49 — a diferença entre 59 e
+9 minutos no mesmo MR de 50 arquivos.
+
+```properties
+MR_ANALYSER_LLM_NUM_CTX=24576
+MR_ANALYSER_LLM_MAX_TOKENS=3000
+```
+
+`num_ctx` precisa acomodar prompt **e** saída: se `prompt + MR_ANALYSER_LLM_MAX_TOKENS` passar da
+janela, o Ollama trunca o prompt em silêncio. O provider emite um `WARN` quando isso acontece.
+
 ### `.mranalyser.yml` (política de análise)
 
 Copie de `.mranalyser.yml.example`, que documenta todos os campos e defaults.
 
 Chaves equivalentes por variável de ambiente: `MR_ANALYSER_LLM_TIMEOUT_SECONDS`,
 `MR_ANALYSER_LLM_MAX_RETRIES`, `MR_ANALYSER_LLM_JSON_MODE`, `MR_ANALYSER_LLM_MAX_TOKENS`,
+`MR_ANALYSER_LLM_NUM_CTX`,
 `MR_ANALYSER_MIN_CONFIDENCE`, `MR_ANALYSER_MAX_FINDINGS`, `MR_ANALYSER_STAGE_UNDERSTANDING`,
 `MR_ANALYSER_STAGE_VALIDATION`, `MR_ANALYSER_STAGE_CROSS_FILE`, `MR_ANALYSER_STAGE_ASSESSMENT`,
 `MR_ANALYSER_CONTEXT_ENABLED`, `MR_ANALYSER_CONTEXT_REQUIRE_REPO_MATCH`,

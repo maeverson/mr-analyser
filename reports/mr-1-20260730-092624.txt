@@ -1,0 +1,403 @@
+📋 MR REVIEW REPORT
+────────────────────────────────────────────────────────
+
+MR !1 — First implementation of invoice-core-v2
+Autor: Ronin
+Branch: feat/initial-implementation → master
+Arquivos alterados: 50
++2415 / -58
+
+────────────────────────────────────────────────────────
+
+ENTENDIMENTO DA ALTERAÇÃO
+
+   Este Merge Request estabelece a base para uma nova implementação de invoice-core-v2 usando Spring Boot 4.1 e Java 25. A estrutura inclui configurações para saúde, persistência, identificadores UUIDv7, API conventions, integração com GCP Pub/Sub, logging estruturado e operações. O MR adiciona novos componentes como controladores de API, publicadores e consumidores de mensagens, e configurações específicas para diferentes ambientes (desenvolvimento, local, produção). A arquitetura segue um estilo hexagonal, com camadas separadas para domínio, aplicação, infraestrutura e API.
+
+   Alcance da mudança: serviço
+   Motivo: O MR afeta principalmente o serviço invoice-core-v2, introduzindo novas funcionalidades e configurações específicas para esse serviço.
+
+   Comportamento alterado:
+   - O comportamento anterior de invoice-core é substituído por uma nova implementação baseada em Spring Boot 4.1 e Java 25.
+   - A integração com GCP Pub/Sub é adicionada, permitindo a publicação e consumo de mensagens.
+
+   Novos caminhos de execução:
+   - Novo caminho para lidar com exceções globais através da classe GlobalExceptionHandler.
+   - Novo caminho para gerar identificadores UUIDv7 usando a classe UuidV7.
+   - Novo caminho para configurar e usar o GCP Pub/Sub através das classes MessagePublisher e AbstractPubSubConsumer.
+
+   Contratos alterados:
+   - Contrato alterado: adição de novos endpoints de API com URI versioning.
+   - Contrato alterado: adição de novas interfaces e classes para publicação e consumo de mensagens.
+
+   Dependências afetadas:
+   - Dependência externa afetada: Spring Boot 4.1
+   - Dependência externa afetada: Java 25
+   - Dependência externa afetada: PostgreSQL 18
+   - Dependência externa afetada: GCP Pub/Sub
+
+────────────────────────────────────────────────────────
+
+MUDANÇAS ESTRUTURAIS DETECTADAS
+
+   • alteração de configuração
+     - configuração alterada (+3/-0) (.mvn/wrapper/maven-wrapper.properties)
+     - configuração alterada (+26/-0) (src/main/java/com/ctbz/billing/invoice/infrastructure/config/LocalGcpConfig.java)
+     - configuração alterada (+13/-0) (src/main/resources/application-dev.yml)
+     - configuração alterada (+18/-0) (src/main/resources/application-local.yml)
+     - ... (5 ocorrência(s) adicional(is))
+   • novo endpoint
+     - novo endpoint exposto (src/main/java/com/ctbz/billing/invoice/api/CONTROLLERS.md)
+   • novo producer
+     - publicação de evento/mensagem adicionada ou alterada (src/main/java/com/ctbz/billing/invoice/application/messaging/MessagePublisher.java)
+     - publicação de evento/mensagem adicionada ou alterada (src/main/java/com/ctbz/billing/invoice/infrastructure/messaging/publishers/PUBLISHERS.md)
+     - publicação de evento/mensagem adicionada ou alterada (src/main/java/com/ctbz/billing/invoice/infrastructure/messaging/PubSubMessagePublisher.java)
+     - publicação de evento/mensagem adicionada ou alterada (src/test/java/com/ctbz/billing/invoice/infrastructure/messaging/PubSubMessagingIntegrationTest.java)
+   • novo consumer
+     - consumer de mensageria adicionado ou alterado (src/main/java/com/ctbz/billing/invoice/infrastructure/messaging/AbstractPubSubConsumer.java)
+     - consumer de mensageria adicionado ou alterado (src/test/java/com/ctbz/billing/invoice/infrastructure/messaging/PubSubMessagingIntegrationTest.java)
+   • nova migration
+     - nova migration (src/main/resources/db/migration/.gitkeep)
+   • alteração de timeout
+     - timeout definido/alterado: connection-timeout: 3000  # fail fast (3s) when the pool is exhausted (src/main/resources/application.yml)
+     - timeout definido/alterado: validation-timeout: 2000  # must be < connection-timeout (src/main/resources/application.yml)
+   • novo client externo
+     - novo client HTTP/externo (mvnw.cmd)
+   • nova dependência
+     - dependência adicionada: spring-boot-starter-parent (pom.xml)
+     - dependência adicionada: invoice-core-v2 (pom.xml)
+     - dependência adicionada: spring-cloud-gcp-dependencies (pom.xml)
+     - dependência adicionada: spring-boot-starter-web (pom.xml)
+     - ... (6 ocorrência(s) adicional(is))
+
+────────────────────────────────────────────────────────
+
+PONTOS QUE EU REVISARIA NO MR
+
+🔴 SOLICITARIA AJUSTE
+
+1. [CRITICAL/BUG] src/main/resources/application-local.yml:11 Credencial literal adicionada em `password`
+
+   A linha adicionada atribui um valor literal a `password`, padrão típico de credencial versionada no repositório.
+
+   Evidência:
+   src/main/resources/application-local.yml:11 atribui literal a `password` (valor omitido deste relatório).
+
+   Cenário de falha:
+   1. o valor é versionado no repositório
+   2. qualquer pessoa com acesso ao histórico do Git obtém a credencial
+   3. remover a linha depois não invalida o segredo, que permanece no histórico
+   4. acesso indevido ao recurso protegido por essa credencial.
+
+   Impacto: Vazamento de credencial com acesso ao ambiente e aos dados protegidos por ela.
+
+   O que avaliar: Remover o valor do código, mover para variável de ambiente ou cofre de segredos e **rotacionar a credencial**, já que ela está no histórico do Git.
+
+   Comentário sugerido:
+   > Esse valor de `password` parece ser uma credencial literal. Podemos movê-lo para variável de ambiente ou cofre? Como já entrou no histórico do Git, vale rotacionar a credencial mesmo depois de remover a linha.
+
+   [confiança 90% | categoria Segurança | bloqueia o merge]
+
+🟡 QUESTIONARIA
+
+2. [MEDIUM/RISK] pom.xml:102 Dependência de Spring Cloud GCP
+
+   A dependência de Spring Cloud GCP é adicionada, mas não há evidência de configuração adequada para garantir a integração com o GCP Pub/Sub.
+
+   Evidência:
+   pom.xml:102 <dependency> com.google.cloud:spring-cloud-gcp-starter-pubsub
+
+   Cenário de falha:
+   1. A aplicação é implantada sem as configurações necessárias para o GCP Pub/Sub
+   2. As mensagens não são publicadas ou consumidas corretamente.
+
+   Impacto: Falha na comunicação com o GCP Pub/Sub, resultando em perda de mensagens ou integração incompleta.
+
+   O que avaliar: Verificar e garantir que as configurações necessárias para o GCP Pub/Sub estejam presentes no arquivo application.yml ou em outro lugar apropriado.
+
+   Comentário sugerido:
+   > Nós precisamos garantir que as configurações do GCP Pub/Sub estejam corretamente definidas. Como estamos lidando com isso?
+
+   [confiança 85% | categoria Confiabilidade | não bloqueia]
+
+3. [MEDIUM/RISK] pom.xml:117 Dependência de Spring Boot Configuration Processor
+
+   A dependência de Spring Boot Configuration Processor é marcada como opcional, mas não há evidência de que ela seja realmente necessária ou utilizada.
+
+   Evidência:
+   pom.xml:117 <dependency> org.springframework.boot:spring-boot-configuration-processor
+
+   Cenário de falha:
+   1. A geração de metadados para @ConfigurationProperties falha
+   2. IDEs não fornecem dicas ou validação adequadas.
+
+   Impacto: Problemas na geração de metadados, resultando em falta de suporte da IDE para configurações.
+
+   O que avaliar: Verificar se essa dependência é realmente necessária e garantir que ela esteja sendo utilizada corretamente.
+
+   Comentário sugerido:
+   > Nós estamos marcando a dependência de Spring Boot Configuration Processor como opcional. Isso está alinhado com nossas práticas?
+
+   [confiança 85% | categoria Confiabilidade | não bloqueia]
+
+4. [MEDIUM/RISK] src/main/java/com/ctbz/billing/invoice/application/messaging/MessagePublisher.java:41 Possível falha na publicação de mensagens
+
+   A implementação atual do MessagePublisher e PubSubMessagePublisher pode não garantir a consistência transacional entre a publicação de mensagens e a persistência local.
+
+   Evidência:
+   src/main/java/com/ctbz/billing/invoice/application/messaging/MessagePublisher.java:41 — public String publish(String topic, Object payload, Map<String, String> attributes);
+src/main/java/com/ctbz/billing/invoice/infrastructure/messaging/PubSubMessagePublisher.java:41 — public String publish(String topic, Object payload, Map<String, String> attributes)
+
+   Cenário de falha:
+   1. A mensagem é publicada com sucesso
+   2. A persistência local falha
+   3. A mensagem foi confirmada externamente sem registro local.
+
+   Impacto: Pode resultar em inconsistência de dados entre o sistema e os sistemas externos.
+
+   O que avaliar: Garantir que a publicação de mensagens e a persistência local sejam tratadas dentro de uma mesma transação ou implementar um mecanismo de compensação para lidar com falhas parciais.
+
+   Comentário sugerido:
+   > Neste fluxo chamamos capture() antes de persistir a invoice. Como garantimos consistência caso o pagamento seja confirmado e o save() falhe depois? Talvez valha tratar esse cenário explicitamente ou garantir idempotência.
+
+   [confiança 85% | categoria Transação | não bloqueia]
+
+5. [LOW/QUESTION] mvnw.cmd:132 Credenciais de download do Maven Wrapper
+
+   O script mvnw.cmd inclui placeholders para credenciais de download do Maven Wrapper, mas não há evidência de como essas credenciais são gerenciadas ou protegidas.
+
+   Evidência:
+   mvnw.cmd:132 if ($env:MVNW_USERNAME -and $env:MVNW_PASSWORD) { ... }
+
+   Impacto: Credenciais podem ser expostas se não forem gerenciadas adequadamente.
+
+   O que avaliar: Verificar como as credenciais são armazenadas e protegidas, considerando práticas de segurança recomendadas.
+
+   Comentário sugerido:
+   > Neste script, as credenciais para download do Maven Wrapper estão sendo lidas das variáveis de ambiente. Como essas credenciais são gerenciadas e protegidas? É necessário garantir que elas não sejam expostas em logs ou outros canais não seguros.
+
+   [confiança 60% | categoria Arquitetura | não bloqueia]
+
+6. [LOW/QUESTION] src/test/java/com/ctbz/billing/invoice/api/GlobalExceptionHandlerTest.java:14 Teste de GlobalExceptionHandler
+
+   O teste verifica se a exceção inesperada é mapeada corretamente para um ProblemDetail com status 500. É necessário verificar se outros tipos de exceções são tratadas adequadamente.
+
+   Evidência:
+   GlobalExceptionHandlerTest.java:14 chama handler.handleUnexpected(new RuntimeException("boom")).
+
+   Cenário de falha:
+   1. Uma exceção diferente de RuntimeException é lançada
+   2. O handler não mapeia corretamente
+   3. Resposta HTTP incorreta.
+
+   Impacto: Possível resposta HTTP incorreta para exceções não tratadas.
+
+   O que avaliar: Adicionar testes para outros tipos de exceções e verificar se todas são mapeadas corretamente.
+
+   Comentário sugerido:
+   > Neste teste, estamos verificando apenas RuntimeException. Precisamos garantir que outras exceções sejam tratadas adequadamente. Podemos adicionar testes para outros tipos de exceções?
+
+   [confiança 60% | categoria Testes | não bloqueia]
+
+7. [LOW/QUESTION] src/test/java/com/ctbz/billing/invoice/infrastructure/messaging/PubSubMessagingIntegrationTest.java:108 Teste de integração de mensageria
+
+   O teste verifica a publicação e consumo de mensagens em um emulador Pub/Sub. É necessário verificar se o tratamento de falhas na publicação ou consumo é adequado.
+
+   Evidência:
+   PubSubMessagingIntegrationTest.java:108 chama consumer.received.poll(15, TimeUnit.SECONDS).
+
+   Cenário de falha:
+   1. A publicação falha
+   2. O consumo falha
+   3. Mensagem não é processada corretamente.
+
+   Impacto: Possível falha no processamento de mensagens.
+
+   O que avaliar: Adicionar testes para cenários de falha na publicação e consumo de mensagens.
+
+   Comentário sugerido:
+   > Neste teste, estamos verificando apenas o fluxo feliz da publicação e consumo. Precisamos garantir que falhas na publicação ou consumo sejam tratadas adequadamente. Podemos adicionar testes para esses cenários?
+
+   [confiança 60% | categoria Testes | não bloqueia]
+
+🔵 SUGESTÕES
+
+8. [MEDIUM/RISK] src/main/resources/application-local.yml:11 Credenciais de banco de dados em arquivo versionado
+
+   As credenciais do banco de dados estão expostas no arquivo application-local.yml, o que pode levar a riscos de segurança se o código for comprometido ou se o arquivo for acidentalmente commitado.
+
+   Evidência:
+   src/main/resources/application-local.yml:11 spring.datasource.password : <REDACTED>
+
+   Cenário de falha:
+   1. O arquivo application-local.yml é comprometido ou acidentalmente commitado no repositório
+   2. Um ator malicioso acessa as credenciais
+   3. O banco de dados é exposto a riscos de acesso não autorizado.
+
+   Impacto: Perda de confidencialidade dos dados armazenados no banco de dados.
+
+   O que avaliar: Remova as credenciais do arquivo versionado e use variáveis de ambiente ou um gerenciador de segredos para fornecer as credenciais em tempo de execução.
+
+   Comentário sugerido:
+   > As credenciais do banco de dados estão expostas no arquivo application-local.yml. Por favor, remova-as e use variáveis de ambiente ou um gerenciador de segredos para fornecer as credenciais em tempo de execução.
+
+   [confiança 95% | categoria Segurança | não bloqueia]
+
+9. [MEDIUM/DESIGN] src/main/java/com/ctbz/billing/invoice/domain/model/base/UuidV7.java:17 Gerador de UUIDv7 estático
+
+   O gerador de UUIDv7 é definido como estático, o que pode levar a problemas de concorrência se usado em um ambiente multi-threaded.
+
+   Evidência:
+   UuidV7.java:17 private static final NoArgGenerator GENERATOR = Generators.timeBasedEpochGenerator();
+
+   Impacto: Pode haver problemas de concorrência se múltiplas threads gerarem UUIDs simultaneamente.
+
+   O que avaliar: Considerar a utilização de um gerador não estático ou sincronizado para garantir thread-safety.
+
+   Comentário sugerido:
+   > O gerador de UUIDv7 é estático. Nesse caso, precisamos garantir que ele seja thread-safe. Podemos considerar a utilização de um gerador não estático ou sincronizado para evitar problemas de concorrência.
+
+   [confiança 85% | categoria Arquitetura | não bloqueia]
+
+10. [MEDIUM/RISK] src/main/java/com/ctbz/billing/invoice/api/GlobalExceptionHandler.java:25 Tratamento genérico de exceções
+
+   O tratamento genérico de exceções pode mascarar problemas específicos e dificultar a depuração.
+
+   Evidência:
+   src/main/java/com/ctbz/billing/invoice/api/GlobalExceptionHandler.java:25 chama handleUnexpected(Exception ex)
+
+   Cenário de falha:
+   1. Uma exceção específica é lançada
+   2. handleUnexpected captura a exceção
+   3. Retorna um ProblemDetail genérico.
+
+   Impacto: Desenvolvedores podem ter dificuldade em identificar e resolver problemas específicos.
+
+   O que avaliar: Considerar o tratamento específico de exceções comuns e adicionar logs mais detalhados para facilitar a depuração.
+
+   Comentário sugerido:
+   > Neste fluxo, estamos capturando todas as exceções genéricamente. Como garantimos que não estamos mascarando problemas específicos ou dificultando a depuração? Talvez valha adicionar tratamento específico para exceções comuns e logs mais detalhados.
+
+   [confiança 85% | categoria Confiabilidade | não bloqueia]
+
+11. [MEDIUM/RISK] src/main/java/com/ctbz/billing/invoice/application/messaging/MessagePublisher.java:41 Possível falha na publicação de mensagens
+
+   A implementação do método publish() pode lançar uma MessagePublishException se a publicação falhar, mas não há garantia de que isso seja tratado adequadamente no fluxo de consumo.
+
+   Evidência:
+   src/main/java/com/ctbz/billing/invoice/application/messaging/MessagePublisher.java:41 chama pubSubTemplate.publish() e pode lançar MessagePublishException
+
+   Cenário de falha:
+   1. A publicação de uma mensagem falha
+   2. MessagePublishException é lançada
+   3. O fluxo de consumo não trata adequadamente essa exceção, podendo resultar em mensagens perdidas ou processamento incorreto.
+
+   Impacto: Mensagens podem ser perdidas ou processadas incorretamente se a publicação falhar e o erro não for tratado adequadamente.
+
+   O que avaliar: Garantir que o fluxo de consumo trate adequadamente MessagePublishException, possivelmente reenviando a mensagem para uma DLQ ou registrando o erro de forma adequada.
+
+   Comentário sugerido:
+   > Neste fluxo chamamos publish() e podemos lançar MessagePublishException. Como garantimos que o consumidor trate adequadamente essa exceção? Talvez valha considerar DLQ ou reenvio de mensagens.
+
+   [confiança 85% | categoria Confiabilidade | não bloqueia]
+
+12. [MEDIUM/RISK] src/main/resources/application.yml:29 Timeout de conexão curto sem retry
+
+   O timeout de conexão está definido como 3000 ms, o que pode levar a falhas rápidas se o pool de conexões estiver esgotado. Não há evidência de configuração de retry.
+
+   Evidência:
+   src/main/resources/application.yml:29 connection-timeout: 3000
+
+   Cenário de falha:
+   1. O pool de conexões está esgotado
+   2. A chamada para obter uma conexão falha com timeout
+   3. A operação que depende da conexão falha.
+
+   Impacto: Possível interrupção das operações que dependem do banco de dados.
+
+   O que avaliar: Adicione configuração de retry para lidar com falhas de conexão temporárias.
+
+   Comentário sugerido:
+   > O timeout de conexão está definido como 3000 ms. Como lidamos com falhas de conexão temporárias? Talvez valha adicionar configuração de retry.
+
+   [confiança 85% | categoria Confiabilidade | não bloqueia]
+
+✅ PONTOS TECNICAMENTE ADEQUADOS
+
+   - Implementação de uma classe específica para gerar UUIDv7, facilitando a substituição do gerador se necessário.
+   - Uso de configurações específicas para diferentes ambientes (desenvolvimento, local, produção).
+   - Adição de testes unitários e integração para garantir a funcionalidade básica.
+   - A estrutura do projeto segue uma arquitetura hexagonal, separando claramente camadas de domínio, aplicação, infraestrutura e API.
+   - Adição de suporte para integração com GCP Pub/Sub, permitindo publicação e consumo de mensagens.
+   - Configurações detalhadas para diferentes ambientes (desenvolvimento, local, produção).
+   - Implementação de uma estrutura hexagonal clara com camadas separadas para domínio, aplicação, infraestrutura e API.
+   - Adição de configurações para saúde, persistência, identificadores UUIDv7, API conventions, integração com GCP Pub/Sub, logging estruturado e operações.
+   - A implementação segue um design hexagonal, separando claramente as camadas de domínio, aplicação e infraestrutura.
+   - Há tratamento adequado de exceções globais através da classe GlobalExceptionHandler.
+   - A estrutura hexagonal foi implementada corretamente, separando claramente as camadas de domínio, aplicação, infraestrutura e API.
+   - A integração com GCP Pub/Sub foi adicionada de forma modular, permitindo a publicação e consumo de mensagens de forma flexível.
+   - A estrutura do projeto segue um padrão hexagonal, separando claramente as camadas de domínio, aplicação, infraestrutura e API.
+   - A integração com GCP Pub/Sub foi adicionada de forma adequada, permitindo a publicação e consumo de mensagens.
+   - Adição de testes para GlobalExceptionHandler e integração de mensageria.
+   - Uso de Testcontainers para emulação de Pub/Sub e PostgreSQL.
+   - Uso de arquitetura hexagonal para separar camadas de domínio, aplicação, infraestrutura e API.
+   - Configuração adequada para saúde e persistência com PostgreSQL.
+   - Integração com GCP Pub/Sub via Spring Cloud GCP.
+   - A estrutura do projeto segue uma arquitetura hexagonal, com camadas bem definidas e responsabilidades claras.
+   - A integração com GCP Pub/Sub é encapsulada por portas e adaptadores, promovendo a portabilidade e a manutenção.
+   - A documentação de arquitetura decisões (ADRs) foi adicionada para registrar as decisões importantes tomadas durante o desenvolvimento.
+   - A estrutura inicial segue uma arquitetura hexagonal, o que promove a portabilidade e a testabilidade.
+   - A integração com GCP Pub/Sub é configurável e pode ser facilmente adaptada para outros provedores de mensageria.
+
+────────────────────────────────────────────────────────
+
+PERGUNTAS AO AUTOR
+
+   1. A aplicação já possui algum mecanismo de tratamento de falhas para lidar com erros de geração de UUIDs?
+   2. Como as credenciais de download do Maven Wrapper são gerenciadas e protegidas?
+   3. Como garantimos que as configurações de timeout definidas em application.yml sejam aplicadas corretamente e não causem problemas de desempenho ou disponibilidade?
+   4. Como garantimos a idempotência dos consumidores em cenários de falha e reprocessamento?
+   5. O que acontece se a publicação de uma mensagem no GCP Pub/Sub falhar? Como garantimos a consistência e a recuperação nesse cenário?
+   6. Como garantimos que as credenciais do GCP não sejam expostas em ambientes de produção?
+   7. Existe algum cenário em que a integração com GCP Pub/Sub possa falhar e como lidamos com isso?
+   8. O arquivo db-bootstrap.sql deve ser executado manualmente pelo DBA antes da primeira inicialização da aplicação? Se sim, como garantimos que isso seja feito corretamente?
+   9. O que acontece se a publicação de uma mensagem falhar? Como o sistema lida com essa situação?
+   10. Como garantimos que outras exceções além de RuntimeException sejam tratadas corretamente no GlobalExceptionHandler?
+   11. Como garantimos que as configurações do GCP Pub/Sub estejam corretamente definidas e seguras?
+   12. Como a aplicação lidará com falhas de publicação de mensagens e como isso afetará a consistência dos dados?
+
+────────────────────────────────────────────────────────
+
+PARECER TÉCNICO
+
+   A implementação está coerente com o objetivo do MR e não identifiquei problemas estruturais no fluxo principal. Há, entretanto, um ponto que merece ajuste antes do merge relacionado à consistência entre persistência e chamada ao provider externo. Também deixaria dois questionamentos não bloqueantes sobre retry e cobertura de testes.
+
+────────────────────────────────────────────────────────
+PARECER
+
+   REQUEST_CHANGES
+   Existe ao menos um ponto bloqueante com evidência e cenário de falha.
+
+   Bloqueadores: 1
+   Questionamentos: 6
+   Sugestões: 5
+
+   Principal risco:
+   Credencial literal adicionada em `password` no arquivo application-local.yml, com risco de vazamento de credencial.
+
+   Confiança da análise: MEDIUM
+────────────────────────────────────────────────────────
+
+QUALIDADE DA ANÁLISE
+
+   Arquivos analisados: 50/50
+   Chunks analisados: 10
+   Contextos relacionados carregados: 0
+   Findings candidatos: 16
+   Descartados por duplicidade: 0
+   Descartados na validação: 5
+   Descartados por confiança: 0
+   Descartados como ruído: 0
+   Findings apresentados: 12
+
+   ⚠️  Etapas não executadas:
+      - contexto do repositório (diretório atual aponta para 'maeverson/mr-analyser', mas o MR é de 'ctbz/billing/invoices/invoice-core-v2')

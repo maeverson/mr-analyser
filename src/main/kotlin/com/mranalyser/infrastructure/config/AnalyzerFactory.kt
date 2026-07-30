@@ -41,6 +41,7 @@ import com.mranalyser.infrastructure.llm.LlmTransportSettings
 import com.mranalyser.infrastructure.llm.NoOpLlmProvider
 import com.mranalyser.infrastructure.llm.OllamaLlmProvider
 import com.mranalyser.infrastructure.llm.OpenAiLlmProvider
+import com.mranalyser.infrastructure.llm.ProgressLoggingLlmProvider
 import com.mranalyser.infrastructure.llm.ResilientLlmProvider
 import com.mranalyser.infrastructure.repository.LocalRepositoryContextProvider
 
@@ -99,18 +100,26 @@ object AnalyzerFactory {
                 baseUrl = config.llm.url ?: "http://localhost:11434",
                 apiKey = key,
                 settings = transport.copy(
-                    timeoutSeconds = maxOf(config.llm.timeoutSeconds, OLLAMA_MINIMUM_TIMEOUT_SECONDS)
+                    timeoutSeconds = maxOf(config.llm.timeoutSeconds, OLLAMA_MINIMUM_TIMEOUT_SECONDS),
+                    numCtx = config.llm.numCtx ?: OLLAMA_DEFAULT_NUM_CTX
                 )
             )
 
             else -> NoOpLlmProvider()
         }
 
-        return if (base is NoOpLlmProvider || config.llm.maxRetries <= 0) {
+        if (base is NoOpLlmProvider) {
+            return base
+        }
+
+        val resilient = if (config.llm.maxRetries <= 0) {
             base
         } else {
             ResilientLlmProvider(base, maxRetries = config.llm.maxRetries)
         }
+
+        // Borda externa: uma linha por chamada lógica, com a duração já incluindo retentativas.
+        return ProgressLoggingLlmProvider(resilient)
     }
 
     fun createAnalyzer(
@@ -151,7 +160,7 @@ object AnalyzerFactory {
                 llmProvider = llmProvider,
                 prompt = LocalReviewPrompt(sections),
                 parser = parser,
-                maxConcurrency = config.maxConcurrency,
+                maxConcurrency = effectiveConcurrency(config),
                 maxOutputTokens = config.llm.maxOutputTokensReview
             ),
             validationStage = FindingValidationStage(
@@ -189,6 +198,14 @@ object AnalyzerFactory {
         )
     }
 
+    /**
+     * O Ollama serializa as chamadas internamente (um runner só atende o endpoint). Pedir
+     * concorrência ali não rende throughput algum: apenas produz coroutines paradas no mutex e um
+     * log de progresso fora de ordem, em que quatro chunks "começam" juntos e terminam um a um.
+     */
+    private fun effectiveConcurrency(config: AppConfig): Int =
+        if (config.llm.provider.lowercase() == "ollama") 1 else config.maxConcurrency
+
     private fun defaultRules(config: AppConfig): List<ReviewRule> = listOf(
         SecretsRule(),
         DebugCodeRule(),
@@ -198,4 +215,11 @@ object AnalyzerFactory {
     )
 
     private const val OLLAMA_MINIMUM_TIMEOUT_SECONDS = 600L
+
+    /**
+     * Cabe um 14B Q4 inteiro na GPU (49/49 camadas numa RTX 3060 de 12 GB, com
+     * `OLLAMA_FLASH_ATTENTION=1` e `OLLAMA_KV_CACHE_TYPE=q8_0`) e ainda acomoda os maiores
+     * prompts de chunk observados, ~19,3 mil tokens, com folga para a saída.
+     */
+    private const val OLLAMA_DEFAULT_NUM_CTX = 24_576
 }
