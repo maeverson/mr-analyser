@@ -1,90 +1,60 @@
 package com.mranalyser.infrastructure.llm
 
 import com.mranalyser.application.port.LlmProvider
-import com.mranalyser.domain.model.LlmReviewResult
-import com.mranalyser.domain.model.ReviewContext
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.cio.CIO
-import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.client.plugins.HttpTimeout
-import io.ktor.client.statement.bodyAsText
-import io.ktor.http.isSuccess
+import com.mranalyser.application.port.LlmRequest
+import com.mranalyser.application.port.LlmResponse
+import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
-import io.ktor.client.request.header
-import io.ktor.serialization.kotlinx.json.json
+import io.ktor.client.statement.bodyAsText
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 
 class OllamaLlmProvider(
-    private val baseUrl: String,
     private val model: String,
+    private val baseUrl: String = "http://localhost:11434",
     private val apiKey: String? = null,
-    private val promptBuilder: PromptBuilder = PromptBuilder(),
-    private val parser: LlmResponseParser = LlmResponseParser()
+    // Inferência self-hosted em diffs grandes é significativamente mais lenta.
+    private val settings: LlmTransportSettings = LlmTransportSettings(timeoutSeconds = 600)
 ) : LlmProvider {
-    private val json = Json { ignoreUnknownKeys = true }
-    private val client = HttpClient(CIO) {
-        install(ContentNegotiation) {
-            json(json)
-        }
-        install(HttpTimeout) {
-            // Self-hosted inference may take significantly longer on large diffs.
-            requestTimeoutMillis = 10 * 60 * 1000
-            connectTimeoutMillis = 30 * 1000
-            socketTimeoutMillis = 10 * 60 * 1000
-        }
-    }
+    override val name: String = "ollama:$model"
 
-    override suspend fun analyse(context: ReviewContext): LlmReviewResult {
-        return runCatching {
-            val endpoint = buildGenerateEndpoint(baseUrl)
-            val response = client.post(endpoint) {
-                header("Content-Type", "application/json")
-                if (!apiKey.isNullOrBlank()) {
-                    header("Authorization", "Bearer $apiKey")
-                }
-                setBody(
-                    OllamaRequest(
-                        model = model,
-                        prompt = promptBuilder.build(context),
-                        stream = false
+    private val client = buildLlmHttpClient(settings)
+
+    override suspend fun complete(request: LlmRequest): LlmResponse = safeCompletion(name) {
+        val response = client.post(buildGenerateEndpoint(baseUrl)) {
+            header("Content-Type", "application/json")
+            if (!apiKey.isNullOrBlank()) {
+                header("Authorization", "Bearer $apiKey")
+            }
+            setBody(
+                OllamaRequest(
+                    model = model,
+                    system = request.system,
+                    prompt = request.user,
+                    stream = false,
+                    format = if (settings.jsonMode) "json" else null,
+                    options = OllamaOptions(
+                        temperature = request.temperature,
+                        numPredict = request.maxOutputTokens
                     )
                 )
-            }
-
-            val rawBody = response.bodyAsText()
-            if (!response.status.isSuccess()) {
-                val errorPayload = runCatching { json.decodeFromString<OllamaErrorResponse>(rawBody) }.getOrNull()
-                val errorMessage = errorPayload?.error ?: rawBody
-                return LlmReviewResult(
-                    summary = "Analise de IA nao executada: falha no Ollama (${response.status.value}). $errorMessage",
-                    findings = emptyList(),
-                    questions = emptyList(),
-                    positivePoints = emptyList()
-                )
-            }
-
-            val parsed = runCatching { json.decodeFromString<OllamaResponse>(rawBody) }.getOrNull()
-            val content = parsed?.response
-            if (content.isNullOrBlank()) {
-                return LlmReviewResult(
-                    summary = "Analise de IA concluida sem conteudo estruturado retornado pelo Ollama.",
-                    findings = emptyList(),
-                    questions = emptyList(),
-                    positivePoints = emptyList()
-                )
-            }
-
-            parser.parse(content)
-        }.getOrElse { exception ->
-            LlmReviewResult(
-                summary = "Analise de IA nao executada por erro de comunicacao com Ollama: ${exception.message}",
-                findings = emptyList(),
-                questions = emptyList(),
-                positivePoints = emptyList()
             )
         }
+
+        response.failureOrNull(name) { raw ->
+            runCatching { llmJson.decodeFromString<OllamaErrorResponse>(raw) }.getOrNull()?.error
+        }?.let { return@safeCompletion LlmResponse.failed(it) }
+
+        val raw = response.bodyAsText()
+        val parsed = runCatching { llmJson.decodeFromString<OllamaResponse>(raw) }.getOrNull()
+            ?: return@safeCompletion LlmResponse.failed("resposta do Ollama não pôde ser desserializada")
+
+        if (parsed.response.isBlank()) {
+            return@safeCompletion LlmResponse.failed("Ollama retornou conteúdo vazio")
+        }
+
+        LlmResponse(parsed.response)
     }
 
     private fun buildGenerateEndpoint(base: String): String {
@@ -97,7 +67,16 @@ class OllamaLlmProvider(
 private data class OllamaRequest(
     val model: String,
     val prompt: String,
-    val stream: Boolean
+    val system: String? = null,
+    val stream: Boolean,
+    val format: String? = null,
+    val options: OllamaOptions? = null
+)
+
+@Serializable
+private data class OllamaOptions(
+    val temperature: Double,
+    @SerialName("num_predict") val numPredict: Int
 )
 
 @Serializable

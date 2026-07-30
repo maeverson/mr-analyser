@@ -5,83 +5,121 @@ import java.io.File
 import java.util.Properties
 
 class ConfigLoader {
-    fun load(verbose: Boolean, showLowConfidence: Boolean, providerOverride: String?, modelOverride: String?): AppConfig {
+    fun load(
+        verbose: Boolean,
+        showLowConfidence: Boolean,
+        providerOverride: String?,
+        modelOverride: String?
+    ): AppConfig {
         val fileConfig = loadFromFile(File(".mranalyser.yml"))
         val properties = loadProperties(File(".mranalyser.properties"))
 
-        fun prop(key: String): String? = properties.getProperty(key)?.trim()?.takeIf { it.isNotBlank() }
+        val source = ConfigSource(properties, fileConfig)
 
-        val gitlabUrl = (prop("GITLAB_URL")
-            ?: System.getenv("GITLAB_URL")
-            ?: fileConfig["gitlabUrl"] as? String
-            ?: "https://gitlab.com")
-            .trimEnd('/')
-
-        val llmProvider = providerOverride
-            ?: prop("MR_ANALYSER_LLM_PROVIDER")
-            ?: System.getenv("MR_ANALYSER_LLM_PROVIDER")
-            ?: nested(fileConfig, "llm", "provider") as? String
-            ?: "openai"
-
-        val llmModel = modelOverride
-            ?: prop("MR_ANALYSER_LLM_MODEL")
-            ?: System.getenv("MR_ANALYSER_LLM_MODEL")
-            ?: nested(fileConfig, "llm", "model") as? String
-            ?: "gpt-4o-mini"
-
-        val ignoredPaths = (nested(fileConfig, "review", "ignoredPaths") as? List<*>)
-            ?.mapNotNull { it?.toString() }
-            ?: emptyList()
-
-        val ignoredCategories = (nested(fileConfig, "review", "ignoredCategories") as? List<*>)
-            ?.mapNotNull { it?.toString() }
-            ?.toSet()
-            ?: emptySet()
-
-        val minimumConfidence = ((nested(fileConfig, "review", "minimumConfidence") as? Number)?.toDouble())
-            ?: 0.60
-
-        val maxDiffLines = ((nested(fileConfig, "limits", "maxDiffLines") as? Number)?.toInt())
-            ?: 5000
-
-        val maxFileLines = ((nested(fileConfig, "limits", "maxFileLines") as? Number)?.toInt())
-            ?: 1500
-
-        val maxConcurrency = (prop("MR_ANALYSER_MAX_CONCURRENCY")?.toIntOrNull()
-            ?: System.getenv("MR_ANALYSER_MAX_CONCURRENCY")?.toIntOrNull()
-            ?: 4).coerceAtLeast(1)
+        val gitlabUrl = (source.text("GITLAB_URL", "gitlabUrl") ?: "https://gitlab.com").trimEnd('/')
 
         return AppConfig(
             gitlabUrl = gitlabUrl,
-            gitlabToken = prop("GITLAB_TOKEN") ?: System.getenv("GITLAB_TOKEN"),
+            gitlabToken = source.text("GITLAB_TOKEN"),
             llm = LlmConfig(
-                provider = llmProvider,
-                model = llmModel,
-                apiKey = prop("MR_ANALYSER_LLM_API_KEY") ?: System.getenv("MR_ANALYSER_LLM_API_KEY"),
-                url = prop("MR_ANALYSER_LLM_URL") ?: System.getenv("MR_ANALYSER_LLM_URL")
+                provider = providerOverride
+                    ?: source.text("MR_ANALYSER_LLM_PROVIDER", "llm", "provider")
+                    ?: "openai",
+                model = modelOverride
+                    ?: source.text("MR_ANALYSER_LLM_MODEL", "llm", "model")
+                    ?: "gpt-4o-mini",
+                apiKey = source.text("MR_ANALYSER_LLM_API_KEY"),
+                url = source.text("MR_ANALYSER_LLM_URL", "llm", "url"),
+                timeoutSeconds = source.number("MR_ANALYSER_LLM_TIMEOUT_SECONDS", "llm", "timeoutSeconds")
+                    ?.toLong() ?: 180L,
+                maxRetries = source.number("MR_ANALYSER_LLM_MAX_RETRIES", "llm", "maxRetries")
+                    ?.toInt()?.coerceIn(0, 5) ?: 2,
+                jsonMode = source.flag("MR_ANALYSER_LLM_JSON_MODE", "llm", "jsonMode") ?: false,
+                maxOutputTokensReview = source.number("MR_ANALYSER_LLM_MAX_TOKENS", "llm", "maxOutputTokens")
+                    ?.toInt() ?: 6_000,
+                maxOutputTokensAssessment = source.number("MR_ANALYSER_LLM_MAX_TOKENS_ASSESSMENT", "llm", "maxOutputTokensAssessment")
+                    ?.toInt() ?: 2_000
             ),
             review = ReviewConfig(
-                ignoredPaths = ignoredPaths,
-                ignoredCategories = ignoredCategories,
-                minimumConfidence = minimumConfidence,
-                showLowConfidence = showLowConfidence
+                ignoredPaths = source.list("review", "ignoredPaths"),
+                ignoredCategories = source.list("review", "ignoredCategories").toSet(),
+                minimumConfidence = source.number("MR_ANALYSER_MIN_CONFIDENCE", "review", "minimumConfidence")
+                    ?.toDouble()?.coerceIn(0.0, 1.0) ?: 0.60,
+                showLowConfidence = showLowConfidence,
+                maxFindings = source.number("MR_ANALYSER_MAX_FINDINGS", "review", "maxFindings")
+                    ?.toInt()?.coerceAtLeast(1) ?: 25,
+                understandingEnabled = source.flag("MR_ANALYSER_STAGE_UNDERSTANDING", "review", "understandingEnabled") ?: true,
+                validationEnabled = source.flag("MR_ANALYSER_STAGE_VALIDATION", "review", "validationEnabled") ?: true,
+                crossFileEnabled = source.flag("MR_ANALYSER_STAGE_CROSS_FILE", "review", "crossFileEnabled") ?: true,
+                finalAssessmentEnabled = source.flag("MR_ANALYSER_STAGE_ASSESSMENT", "review", "finalAssessmentEnabled") ?: true
             ),
             limits = LimitsConfig(
-                maxDiffLines = maxDiffLines,
-                maxFileLines = maxFileLines
+                maxDiffLines = source.number("MR_ANALYSER_MAX_DIFF_LINES", "limits", "maxDiffLines")?.toInt() ?: 2_500,
+                maxFileLines = source.number("MR_ANALYSER_MAX_FILE_LINES", "limits", "maxFileLines")?.toInt() ?: 900
             ),
-            maxConcurrency = maxConcurrency,
+            context = ContextConfig(
+                enabled = source.flag("MR_ANALYSER_CONTEXT_ENABLED", "context", "enabled") ?: true,
+                maxFilesPerChange = source.number("MR_ANALYSER_CONTEXT_MAX_FILES_PER_CHANGE", "context", "maxFilesPerChange")
+                    ?.toInt() ?: 4,
+                maxTotalFiles = source.number("MR_ANALYSER_CONTEXT_MAX_TOTAL_FILES", "context", "maxTotalFiles")
+                    ?.toInt() ?: 24,
+                maxCharsPerFile = source.number("MR_ANALYSER_CONTEXT_MAX_CHARS", "context", "maxCharsPerFile")
+                    ?.toInt() ?: 4_000,
+                requireRepositoryMatch = source.flag("MR_ANALYSER_CONTEXT_REQUIRE_REPO_MATCH", "context", "requireRepositoryMatch")
+                    ?: true
+            ),
+            maxConcurrency = (source.number("MR_ANALYSER_MAX_CONCURRENCY", "maxConcurrency")?.toInt() ?: 4)
+                .coerceIn(1, 16),
             verbose = verbose
         )
     }
 
-    @Suppress("UNCHECKED_CAST")
-    private fun nested(root: Map<String, Any>, vararg keys: String): Any? {
-        var node: Any? = root
-        for (key in keys) {
-            node = (node as? Map<String, Any>)?.get(key)
+    /**
+     * Precedência: `.mranalyser.properties` → variável de ambiente → `.mranalyser.yml` → default.
+     * Extraída para uma classe própria porque a versão anterior repetia essa cadeia em cada campo.
+     */
+    private class ConfigSource(
+        private val properties: Properties,
+        private val yaml: Map<String, Any>
+    ) {
+        fun text(propertyKey: String, vararg yamlPath: String): String? =
+            properties.getProperty(propertyKey)?.trim()?.takeIf { it.isNotBlank() }
+                ?: System.getenv(propertyKey)?.trim()?.takeIf { it.isNotBlank() }
+                ?: nested(*yamlPath)?.toString()?.trim()?.takeIf { it.isNotBlank() }
+
+        fun number(propertyKey: String, vararg yamlPath: String): Number? {
+            text(propertyKey)?.let { raw ->
+                raw.toDoubleOrNull()?.let { return it }
+            }
+            return nested(*yamlPath) as? Number
+                ?: nested(*yamlPath)?.toString()?.toDoubleOrNull()
         }
-        return node
+
+        fun flag(propertyKey: String, vararg yamlPath: String): Boolean? {
+            text(propertyKey)?.let { raw ->
+                return when (raw.lowercase()) {
+                    "true", "1", "yes", "on" -> true
+                    "false", "0", "no", "off" -> false
+                    else -> null
+                }
+            }
+            return nested(*yamlPath) as? Boolean
+        }
+
+        fun list(vararg yamlPath: String): List<String> =
+            (nested(*yamlPath) as? List<*>)?.mapNotNull { it?.toString() } ?: emptyList()
+
+        @Suppress("UNCHECKED_CAST")
+        private fun nested(vararg keys: String): Any? {
+            if (keys.isEmpty()) {
+                return null
+            }
+            var node: Any? = yaml
+            for (key in keys) {
+                node = (node as? Map<String, Any>)?.get(key) ?: return null
+            }
+            return node
+        }
     }
 
     @Suppress("UNCHECKED_CAST")
@@ -89,9 +127,9 @@ class ConfigLoader {
         if (!file.exists()) {
             return emptyMap()
         }
-        val yaml = Yaml()
-        val parsed = yaml.load<Any>(file.readText())
-        return parsed as? Map<String, Any> ?: emptyMap()
+        return runCatching { Yaml().load<Any>(file.readText()) as? Map<String, Any> }
+            .getOrNull()
+            ?: emptyMap()
     }
 
     private fun loadProperties(file: File): Properties {
@@ -99,10 +137,7 @@ class ConfigLoader {
         if (!file.exists()) {
             return properties
         }
-
-        file.inputStream().use { input ->
-            properties.load(input)
-        }
+        runCatching { file.inputStream().use { properties.load(it) } }
         return properties
     }
 }

@@ -1,295 +1,214 @@
 # mr-analyser
 
-AI-assisted GitLab Merge Request reviewer.
+Revisão assistida de Merge Requests do GitLab, em nível de Especialista de Tecnologia.
 
-`mr-analyser` e uma ferramenta CLI para revisao assistida de Merge Requests do GitLab. O foco da V1 e apoiar o reviewer com sinais de risco relevantes, sem alterar codigo automaticamente.
+A ferramenta não tenta substituir o julgamento do revisor. Ela responde uma pergunta:
 
-## Principios
+> **Quais pontos eu deveria comentar, questionar ou solicitar ajuste neste MR?**
 
-- simplicidade
-- baixo acoplamento
-- alta coesao
-- testabilidade
-- extensibilidade
-- separacao entre dominio e infraestrutura
+A prioridade absoluta é **signal-to-noise ratio**. Vale mais 4 findings excelentes que 20
+superficiais, e uma lista vazia é uma resposta legítima.
+
+## Princípios de julgamento
+
+O sistema distingue seis naturezas de achado, porque tratar dúvida como acusação é a principal
+forma de destruir a confiança em um relatório automatizado:
+
+| Tipo | Significado |
+|---|---|
+| `BUG` | há evidência concreta de comportamento incorreto |
+| `RISK` | pode funcionar, mas existe condição relevante capaz de provocar falha |
+| `DESIGN` | funciona, porém introduz dívida técnica |
+| `ARCHITECTURE` | impacto estrutural, acoplamento ou responsabilidade incorreta |
+| `QUESTION` | falta informação para afirmar problema; merece esclarecimento do autor |
+| `SUGGESTION` | melhoria possível, não bloqueia aprovação |
+
+Três regras estruturais decorrem disso:
+
+1. **Evidência é obrigatória** a partir de `MEDIUM`. Sem evidência, o achado é rebaixado a
+   questionamento em vez de ser apresentado como fato.
+2. **Bloqueio não deriva de severidade.** `HIGH` sem cenário de falha não bloqueia; `MEDIUM` com
+   corrupção garantida em cenário específico bloqueia.
+3. **A decisão é determinística.** O modelo sugere; as políticas de domínio decidem. Um finding
+   que não passou pela validação nunca segura um merge.
+
+## Pipeline
+
+```
+GitLab MR
+   │
+   ├── ChangeClassifier            → grupo arquitetural por arquivo
+   ├── UnifiedDiffParser           → linhas com ADDED/REMOVED/CONTEXT e número real
+   ├── ArchitecturalSignalDetector → nova dependência, migration, endpoint, timeout, retry…
+   ├── SymbolExtractor + RepositoryContextRetriever → contexto relacionado (com gate de identidade)
+   │
+   ├── 1. Entendimento da alteração        (LLM)  intenção, contratos, blast radius
+   ├── 2. Deep review por chunk coeso      (LLM)  findings candidatos, prompt por camada
+   ├── 3. Regras estáticas                        segredo, debug, TODO, tamanho, testes
+   ├── 4. Deduplicação                            duplicatas e pontos já discutidos
+   ├── 5. Validação adversarial            (LLM)  KEEP / QUESTION / DISCARD  ← maior efeito no ruído
+   ├── 6. Análise cross-file               (LLM)  problemas visíveis só entre arquivos
+   ├── 7. Políticas: evidência, bloqueio, ruído
+   ├── 8. MergeRecommendationCalculator
+   └── 9. Parecer técnico                  (LLM)
+```
+
+Nenhuma etapa LLM é obrigatória. Se uma falhar, a análise continua degradada e o motivo aparece
+na seção "Qualidade da análise" do relatório.
+
+## Estrutura do relatório
+
+```
+ENTENDIMENTO DA ALTERAÇÃO
+MUDANÇAS ESTRUTURAIS DETECTADAS
+PONTOS QUE EU REVISARIA NO MR
+  🔴 Solicitaria ajuste       (bloqueantes: evidência + cenário de falha)
+  🟡 Questionaria             (risco legítimo sem prova suficiente)
+  🔵 Sugestões                (não bloqueiam)
+  ✅ Pontos tecnicamente adequados
+DÍVIDA TÉCNICA NÃO INTRODUZIDA POR ESTE MR
+PARECER TÉCNICO
+PARECER          → APPROVE | APPROVE_WITH_SUGGESTIONS | NEEDS_DISCUSSION | REQUEST_CHANGES
+QUALIDADE DA ANÁLISE
+```
+
+Categorias vazias não são impressas.
 
 ## Stack
 
-- Kotlin
-- JVM 21
-- Gradle Kotlin DSL
-- Ktor Client
-- kotlinx.serialization
-- Clikt
-- SLF4J + Logback
-- JUnit 5
-- MockK
-- WireMock
+Kotlin · JVM 21 · Gradle Kotlin DSL · Ktor Client · kotlinx.serialization · Clikt ·
+SLF4J + Logback · JUnit 5 · MockK · WireMock
 
-## Installation
-
-### 1. Pre-requisitos
-
-- Linux/macOS/Windows
-- acesso a internet para baixar dependencias Gradle
-- token do GitLab com permissao de leitura de MR
-- chave de API de LLM (quando usar provider `openai`)
-
-### 2. Build
+## Build
 
 ```bash
-./gradlew clean build --no-daemon
+./gradlew clean build
 ```
 
-## Configuration
+## Configuração
 
-As configuracoes podem vir de:
+Origem, em ordem de precedência:
 
-- `.mranalyser.properties` (principal)
-- `.mranalyser.yml` (regras/limites)
-- variaveis de ambiente (fallback)
+1. flags da CLI (`--provider`, `--model`, `--fast`, `--no-context`, …)
+2. `.mranalyser.properties`
+3. variáveis de ambiente
+4. `.mranalyser.yml`
+5. defaults internos
 
-### Arquivo de propriedades do projeto
-
-Copie o arquivo de exemplo e preencha os valores:
-
-```bash
-cp .mranalyser.properties.example .mranalyser.properties
-```
-
-Exemplo:
+### `.mranalyser.properties` (segredos)
 
 ```properties
 GITLAB_URL=https://gitlab.com
-GITLAB_TOKEN=<token>
+GITLAB_TOKEN=<token com permissão de leitura de MR>
 
 MR_ANALYSER_LLM_PROVIDER=openai
 MR_ANALYSER_LLM_MODEL=gpt-4o-mini
-MR_ANALYSER_LLM_API_KEY=<token>
+MR_ANALYSER_LLM_API_KEY=<chave>
 MR_ANALYSER_LLM_URL=https://api.openai.com/v1
 
 MR_ANALYSER_MAX_CONCURRENCY=4
 ```
 
-Precedencia de configuracao:
+### `.mranalyser.yml` (política de análise)
 
-1. flags da CLI (quando aplicavel, ex.: `--provider`, `--model`)
-2. `.mranalyser.properties`
-3. variaveis de ambiente
-4. `.mranalyser.yml`
-5. defaults internos
+Copie de `.mranalyser.yml.example`, que documenta todos os campos e defaults.
 
-### Arquivo `.mranalyser.yml`
+Chaves equivalentes por variável de ambiente: `MR_ANALYSER_LLM_TIMEOUT_SECONDS`,
+`MR_ANALYSER_LLM_MAX_RETRIES`, `MR_ANALYSER_LLM_JSON_MODE`, `MR_ANALYSER_LLM_MAX_TOKENS`,
+`MR_ANALYSER_MIN_CONFIDENCE`, `MR_ANALYSER_MAX_FINDINGS`, `MR_ANALYSER_STAGE_UNDERSTANDING`,
+`MR_ANALYSER_STAGE_VALIDATION`, `MR_ANALYSER_STAGE_CROSS_FILE`, `MR_ANALYSER_STAGE_ASSESSMENT`,
+`MR_ANALYSER_CONTEXT_ENABLED`, `MR_ANALYSER_CONTEXT_REQUIRE_REPO_MATCH`,
+`MR_ANALYSER_CONTEXT_MAX_FILES_PER_CHANGE`, `MR_ANALYSER_CONTEXT_MAX_TOTAL_FILES`,
+`MR_ANALYSER_CONTEXT_MAX_CHARS`, `MR_ANALYSER_MAX_DIFF_LINES`, `MR_ANALYSER_MAX_FILE_LINES`.
 
-```yaml
-review:
-  ignoredPaths:
-    - "*.lock"
-    - "generated/**"
-    - "vendor/**"
+`mr-analyser config show` imprime a configuração efetiva com segredos mascarados.
 
-  ignoredCategories:
-    - "CODE_STYLE"
-
-  minimumConfidence: 0.60
-
-limits:
-  maxDiffLines: 5000
-  maxFileLines: 1500
-
-llm:
-  provider: openai
-  model: gpt-4o-mini
-```
-
-## GitLab token
-
-- configure `GITLAB_TOKEN` no `.mranalyser.properties`
-- o token nunca e impresso em logs
-- `mr-analyser config show` mascara segredos
-
-## LLM configuration
-
-Provedores suportados na V1:
-
-- `openai`
-- `ollama`
-- `anthropic`
-- `gemini`
-- fallback `noop` quando API key nao estiver configurada
-
-Arquitetura preparada para evolucao:
-
-- OpenAI
-- Anthropic
-- Ollama
-- Gemini
-
-### Self-hosted (Ollama)
-
-Para rodar apontando para ambiente local/self-hosted, use `ollama`:
-
-```properties
-MR_ANALYSER_LLM_PROVIDER=ollama
-MR_ANALYSER_LLM_MODEL=qwen2.5-coder:14b
-MR_ANALYSER_LLM_URL=http://ollama.letsflowtech.com.br
-```
-
-Se seu Ollama estiver atras de proxy com autenticacao, configure tambem:
-
-```properties
-MR_ANALYSER_LLM_API_KEY=<token-opcional>
-```
-
-Observacao:
-
-- Se `MR_ANALYSER_LLM_URL` terminar com `/api`, o cliente usa `.../api/generate`.
-- Se nao terminar com `/api`, o cliente adiciona `/api/generate` automaticamente.
-
-## Usage
-
-### Analyse
-
-Com projeto explicito:
+## Uso
 
 ```bash
-./gradlew run --args="analyse --project group/project --mr 123"
-```
+# por URL
+./gradlew run --args="analyse --url https://gitlab.com/grupo/projeto/-/merge_requests/123"
 
-Via URL:
+# por projeto e IID
+./gradlew run --args="analyse --project grupo/projeto --mr 123"
 
-```bash
-./gradlew run --args="analyse --url https://gitlab.com/group/project/-/merge_requests/123"
-```
-
-Com autodiscovery local (dentro de repo Git com `origin` apontando para GitLab):
-
-```bash
+# dentro do repositório do MR, com autodiscovery pelo origin
 ./gradlew run --args="analyse --mr 123"
 ```
 
-Opcoes:
+Opções: `--project`, `--mr`, `--url`, `--provider`, `--model`,
+`--output console|markdown|json|gitlab-comments`, `--verbose`, `--show-low-confidence`,
+`--no-context`, `--fast`.
 
-- `--project`
-- `--mr`
-- `--url`
-- `--provider`
-- `--model`
-- `--output` (`console|markdown|json|gitlab-comments`)
-- `--verbose`
-- `--show-low-confidence`
+O relatório é impresso e salvo em `reports/`.
 
-### Config
+### Contexto do repositório local
 
-```bash
-./gradlew run --args="config show"
-```
+O retrieval só é usado se o `origin` do diretório atual corresponder ao projeto do MR. Rodar
+de fora do repositório correto **não** injeta contexto alheio: a etapa é registrada como não
+executada. Para análise com contexto, execute de dentro do checkout do projeto do MR.
 
-### Version
+Sem contexto, os prompts instruem o modelo a **não** concluir ausência de retry, timeout,
+transação, validação ou idempotência a partir do diff — nesses casos ele deve perguntar.
 
-```bash
-./gradlew run --args="version"
-```
+### Formatos de saída
 
-## Output
+| Formato | Uso |
+|---|---|
+| `console` | leitura durante a revisão (default) |
+| `markdown` | colar em wiki, issue ou descrição de MR |
+| `json` | automação e auditoria — inclui evidência, cenário de falha, veredito da validação e origem de cada finding |
+| `gitlab-comments` | comentários prontos, classificados em `BLOCKER`/`QUESTION`/`SUGGESTION`/`OBSERVATION`/`PRAISE` |
 
-O relatorio em console inclui:
+## Arquitetura
 
-- resumo do MR
-- findings por severidade
-- perguntas para autor
-- pontos positivos
-- recomendacao final de merge
+Clean/Hexagonal:
 
-## Architecture
+| Camada | Conteúdo |
+|---|---|
+| `domain` | modelos, parser de diff, políticas de decisão, regras estáticas, redação de segredos |
+| `application` | pipeline (`review/`), prompts e parsing (`llm/`), portas (`port/`), serviços (`service/`) |
+| `infrastructure` | GitLab, providers de LLM (só transporte), config, renderizadores, contexto local |
+| `cli` | entrada da aplicação |
 
-Arquitetura em estilo Clean/Hexagonal:
+**Decisão central:** `LlmProvider` expõe `complete(LlmRequest): LlmResponse` — texto entra, texto
+sai. Prompt, schema de resposta e parsing vivem em `application/llm` e são compartilhados por
+todos os providers. Sem essa inversão só existiria um prompt possível e, portanto, uma única
+etapa de análise. O provider nunca lança exceção: falha vira `LlmResponse.failed`.
 
-- `domain`: modelos e regras
-- `application`: use cases, services e ports
-- `infrastructure`: GitLab client/provider, LLM providers, config, renderer
-- `cli`: entrada da aplicacao
+Providers: `openai`, `anthropic`, `gemini`, `ollama`, e `noop` quando não há chave configurada.
 
-Fluxo principal:
+Detalhes do diagnóstico da versão anterior e das decisões tomadas (incluindo o que foi
+deliberadamente **não** implementado): [docs/ARCHITECTURE-REVIEW-ENGINE.md](docs/ARCHITECTURE-REVIEW-ENGINE.md).
 
-1. CLI resolve alvo (`--project/--mr` ou `--url` ou autodiscovery)
-2. Provider GitLab coleta MR + changes + commits + discussions + approvals
-3. `MergeRequestAnalyzer` executa:
-   - regras estaticas
-   - chunking de diff
-   - analise LLM por chunk com limite de concorrencia
-   - deduplicacao de findings
-   - recomendacao de merge
-4. `ConsoleReportRenderer` imprime resultado
+## Segurança
 
-## Security
-
-- nao loga tokens
-- prompt envia conteudo com mascaramento basico de segredos detectados
-- considera conteudo do repositorio como dado nao confiavel (protege contra prompt injection)
-- suporte a `ignoredPaths` e `ignoredCategories`
+- tokens nunca são impressos em log; `config show` mascara segredos;
+- credenciais literais são mascaradas antes do envio ao modelo — referências a símbolo
+  (`config.apiKey`, `System.getenv(...)`) são preservadas, porque são contexto legítimo de review;
+- todo conteúdo do repositório é tratado como dado não confiável nos prompts, com instrução
+  explícita contra prompt injection em commit, descrição, código e discussões;
+- `ignoredPaths` e `ignoredCategories` limitam o que é enviado e o que é reportado.
 
 ## Testes
 
-Rodar todos os testes:
-
 ```bash
-./gradlew clean test --no-daemon
+./gradlew clean test
 ```
 
-Cobertura inicial inclui:
+Cobertura: parsing tolerante de resposta (JSON cercado, prosa, `<think>`, vírgula sobrando, tipo
+errado, enum desconhecido), políticas de evidência/bloqueio/ruído, recomendação de merge,
+deduplicação, classificação de mudança, sinais arquiteturais, parser de diff, regras estáticas,
+context retrieval e gate de identidade, prompts das cinco etapas, providers de LLM sob falha
+HTTP e indisponibilidade, retry, renderizadores e análise parcial.
 
-- `GitLabClient`
-- `GitLabMergeRequestProvider`
-- `MergeRequestAnalyzer`
-- `ReviewChunker`
-- `FindingDeduplicator`
-- `MergeRecommendationCalculator`
-- `ConsoleReportRenderer`
+Fixtures de MR em `src/test/kotlin/com/mranalyser/support/MergeRequestFixtures.kt`: bug real,
+falso positivo, problema transacional, ausência de testes, problema cross-file, MR correto,
+risco que deve virar questionamento e credencial vazada.
 
-Fixtures:
+## Limitações conhecidas
 
-- `src/test/resources/gitlab/`
-
-## Roadmap
-
-### V1
-
-- CLI
-- integracao GitLab
-- analise de diff
-- regras estaticas
-- analise LLM
-- relatorio console
-
-### V2
-
-- renderer Markdown e JSON
-- contexto local de repositorio enriquecido
-- regras mais especificas por linguagem
-
-### V3
-
-- publicacao de comentarios no GitLab
-- modo interativo de review
-
-### V4
-
-- integracao com GitLab CI
-
-### V5
-
-- repository knowledge
-- RAG
-- regras arquiteturais organizacionais
-
-## Limites atuais
-
-- parser de YAML e simples (foco MVP)
-- deduplicacao textual inicial
-- provider LLM implementado apenas para OpenAI
-- context discovery local ainda basico
-
-## Licenca
-
-Definir conforme necessidade do time.
+- context retrieval é heurístico por símbolo e estrutura, não semântico (sem embeddings);
+- a ferramenta é read-only: não publica comentários no GitLab;
+- diffs muito grandes são truncados por arquivo — o truncamento é informado ao modelo e ao
+  revisor, e o arquivo é sinalizado como analisado parcialmente.

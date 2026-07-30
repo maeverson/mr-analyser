@@ -30,6 +30,10 @@ class GitLabMergeRequestProvider(
             status = mr.state,
             reviewers = mr.reviewers.map { it.toDomain() },
             approvalsRequired = approvals?.approvalsRequired,
+            // O caminho do projeto é necessário para validar a identidade do repositório local
+            // antes de usar o context retrieval.
+            projectPath = project,
+            webUrl = mr.webUrl,
             changes = changes.changes.map { change ->
                 val (added, removed) = computeLineStats(change.diff)
                 FileChange(
@@ -40,14 +44,16 @@ class GitLabMergeRequestProvider(
                     renamed = change.renamedFile,
                     diff = change.diff,
                     linesAdded = added,
-                    linesRemoved = removed
+                    linesRemoved = removed,
+                    generated = change.generatedFile
                 )
             },
-            commits = commits.map {
+            commits = commits.map { commit ->
                 Commit(
-                    sha = it.id,
-                    message = it.title,
-                    author = Author(name = it.authorName)
+                    sha = commit.id,
+                    // O corpo do commit costuma trazer a intenção que o título omite.
+                    message = commit.message?.takeIf { it.isNotBlank() } ?: commit.title,
+                    author = Author(name = commit.authorName)
                 )
             },
             discussions = discussions.map { discussion ->
@@ -57,7 +63,12 @@ class GitLabMergeRequestProvider(
                         DiscussionNote(
                             id = note.id.toString(),
                             author = note.author.toDomain(),
-                            body = note.body
+                            body = note.body,
+                            system = note.system,
+                            resolvable = note.resolvable,
+                            resolved = note.resolved,
+                            file = note.position?.newPath ?: note.position?.oldPath,
+                            line = note.position?.newLine ?: note.position?.oldLine
                         )
                     }
                 )
@@ -65,13 +76,11 @@ class GitLabMergeRequestProvider(
         )
     }
 
-    private fun GitLabUserDto.toDomain(): Author {
-        return Author(
-            id = id,
-            name = name,
-            username = username
-        )
-    }
+    private fun GitLabUserDto.toDomain(): Author = Author(
+        id = id,
+        name = name,
+        username = username
+    )
 
     private fun computeLineStats(diff: String): Pair<Int, Int> {
         var added = 0

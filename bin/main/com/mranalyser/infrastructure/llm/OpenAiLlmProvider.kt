@@ -1,95 +1,61 @@
 package com.mranalyser.infrastructure.llm
 
 import com.mranalyser.application.port.LlmProvider
-import com.mranalyser.domain.model.LlmReviewResult
-import com.mranalyser.domain.model.ReviewContext
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.cio.CIO
-import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import com.mranalyser.application.port.LlmRequest
+import com.mranalyser.application.port.LlmResponse
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
-import io.ktor.http.isSuccess
-import io.ktor.serialization.kotlinx.json.json
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 
 class OpenAiLlmProvider(
-    private val baseUrl: String = "https://api.openai.com/v1",
     private val apiKey: String,
     private val model: String,
-    private val promptBuilder: PromptBuilder = PromptBuilder(),
-    private val parser: LlmResponseParser = LlmResponseParser()
+    private val baseUrl: String = "https://api.openai.com/v1",
+    private val settings: LlmTransportSettings = LlmTransportSettings()
 ) : LlmProvider {
-    private val json = Json { ignoreUnknownKeys = true }
+    override val name: String = "openai:$model"
 
-    private val client = HttpClient(CIO) {
-        install(ContentNegotiation) {
-            json(json)
-        }
-    }
+    private val client = buildLlmHttpClient(settings)
 
-    override suspend fun analyse(context: ReviewContext): LlmReviewResult {
+    override suspend fun complete(request: LlmRequest): LlmResponse = safeCompletion(name) {
         if (apiKey.isBlank()) {
-            return LlmReviewResult(
-                summary = "Analise de IA nao executada: API key ausente.",
-                findings = emptyList(),
-                questions = emptyList(),
-                positivePoints = emptyList()
+            return@safeCompletion LlmResponse.failed("API key da OpenAI não configurada")
+        }
+
+        val response = client.post("${baseUrl.trimEnd('/')}/chat/completions") {
+            header("Authorization", "Bearer $apiKey")
+            header("Content-Type", "application/json")
+            setBody(
+                ChatCompletionsRequest(
+                    model = model,
+                    messages = listOf(
+                        ChatMessage(role = "system", content = request.system),
+                        ChatMessage(role = "user", content = request.user)
+                    ),
+                    temperature = request.temperature,
+                    maxTokens = request.maxOutputTokens,
+                    responseFormat = if (settings.jsonMode) ResponseFormat("json_object") else null
+                )
             )
         }
 
-        val request = ChatCompletionsRequest(
-            model = model,
-            messages = listOf(
-                ChatMessage(role = "system", content = "You are a strict and practical code reviewer."),
-                ChatMessage(role = "user", content = promptBuilder.build(context))
-            ),
-            temperature = 0.2
-        )
+        response.failureOrNull(name) { raw ->
+            runCatching { llmJson.decodeFromString<OpenAiErrorResponse>(raw) }.getOrNull()?.error?.message
+        }?.let { return@safeCompletion LlmResponse.failed(it) }
 
-        return runCatching {
-            val response = client.post("${baseUrl.trimEnd('/')}/chat/completions") {
-                header("Authorization", "Bearer $apiKey")
-                header("Content-Type", "application/json")
-                setBody(request)
-            }
+        val raw = response.bodyAsText()
+        val parsed = runCatching { llmJson.decodeFromString<ChatCompletionsResponse>(raw) }.getOrNull()
+            ?: return@safeCompletion LlmResponse.failed("resposta da OpenAI não pôde ser desserializada")
 
-            val rawBody = response.bodyAsText()
-
-            if (!response.status.isSuccess()) {
-                val errorPayload = runCatching { json.decodeFromString<OpenAiErrorResponse>(rawBody) }.getOrNull()
-                val errorMessage = errorPayload?.error?.message ?: rawBody
-                return LlmReviewResult(
-                    summary = "Analise de IA nao executada: falha na API OpenAI (${response.status.value}). $errorMessage",
-                    findings = emptyList(),
-                    questions = emptyList(),
-                    positivePoints = emptyList()
-                )
-            }
-
-            val parsed = runCatching { json.decodeFromString<ChatCompletionsResponse>(rawBody) }.getOrNull()
-            val content = parsed?.choices?.firstOrNull()?.message?.content
-
-            if (content.isNullOrBlank()) {
-                return LlmReviewResult(
-                    summary = "Analise de IA concluida sem conteudo estruturado retornado pelo provedor.",
-                    findings = emptyList(),
-                    questions = emptyList(),
-                    positivePoints = emptyList()
-                )
-            }
-
-            parser.parse(content)
-        }.getOrElse { exception ->
-            LlmReviewResult(
-                summary = "Analise de IA nao executada por erro de comunicacao com o provedor: ${exception.message}",
-                findings = emptyList(),
-                questions = emptyList(),
-                positivePoints = emptyList()
-            )
+        val content = parsed.choices.firstOrNull()?.message?.content
+        if (content.isNullOrBlank()) {
+            return@safeCompletion LlmResponse.failed("OpenAI retornou conteúdo vazio")
         }
+
+        LlmResponse(content)
     }
 }
 
@@ -97,8 +63,13 @@ class OpenAiLlmProvider(
 data class ChatCompletionsRequest(
     val model: String,
     val messages: List<ChatMessage>,
-    val temperature: Double
+    val temperature: Double,
+    @SerialName("max_tokens") val maxTokens: Int? = null,
+    @SerialName("response_format") val responseFormat: ResponseFormat? = null
 )
+
+@Serializable
+data class ResponseFormat(val type: String)
 
 @Serializable
 data class ChatMessage(

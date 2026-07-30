@@ -1,24 +1,71 @@
+# Configuração de análise. Segredos NÃO vão aqui — use .mranalyser.properties ou variáveis
+# de ambiente. Todos os campos são opcionais; os valores mostrados são os defaults.
+
 review:
+  # Caminhos ignorados. Suporta glob: * (um nível), ** (recursivo), ? (um caractere).
   ignoredPaths:
     - "*.lock"
     - "generated/**"
     - "vendor/**"
 
+  # Categorias suprimidas do relatório.
+  # BUG | BUSINESS_RULE | SECURITY | ARCHITECTURE | DESIGN | PERFORMANCE | CONCURRENCY |
+  # TRANSACTION | DATA_CONSISTENCY | RELIABILITY | API_CONTRACT | OBSERVABILITY | OPERATIONS |
+  # TESTABILITY | MAINTAINABILITY | CODE_STYLE | COMPATIBILITY | DOCUMENTATION
   ignoredCategories:
     - "CODE_STYLE"
 
+  # Abaixo deste valor o finding não participa da recomendação de merge.
   minimumConfidence: 0.60
 
+  # Limite de findings apresentados no relatório.
+  maxFindings: 25
+
+  # Etapas do pipeline. Desligar reduz custo e piora a análise; o relatório registra
+  # cada etapa desativada em "Qualidade da análise".
+  understandingEnabled: true      # entendimento da alteração e blast radius
+  validationEnabled: true         # validação adversarial — o que mais reduz falso positivo
+  crossFileEnabled: true          # problemas visíveis só entre dois arquivos
+  finalAssessmentEnabled: true    # parecer técnico executivo
+
 limits:
-  maxDiffLines: 5000
-  maxFileLines: 1500
+  # Linhas de diff anotado por chunk enviado ao modelo.
+  maxDiffLines: 2500
+  # Acima disso o diff do arquivo é truncado (e o truncamento é informado ao modelo).
+  maxFileLines: 900
+
+context:
+  enabled: true
+
+  # Exige que o `origin` do diretório atual corresponda ao projeto do MR antes de usar o
+  # contexto local. Desligar faz a ferramenta injetar código de um repositório sem relação
+  # com o MR — não desligue.
+  requireRepositoryMatch: true
+
+  maxFilesPerChange: 4
+  maxTotalFiles: 24
+  maxCharsPerFile: 4000
 
 llm:
-  provider: openai
+  provider: openai            # openai | anthropic | gemini | ollama
   model: gpt-4o-mini
+  # url: https://api.openai.com/v1
 
-# examples:
+  timeoutSeconds: 180
+  maxRetries: 2               # retry com backoff apenas em falha transitória
+
+  # Modo JSON nativo do fornecedor (response_format / format). Desligado por padrão:
+  # vários gateways "OpenAI-compatible" e proxies de Ollama respondem 400 ao campo.
+  jsonMode: false
+
+  maxOutputTokens: 6000            # etapas de review, validação e cross-file
+  maxOutputTokensAssessment: 2000  # entendimento e parecer final
+
+maxConcurrency: 4
+
+# Exemplo self-hosted:
 # llm:
 #   provider: ollama
-#   model: llama3.1:8b
+#   model: qwen2.5-coder:14b
 #   url: http://localhost:11434
+#   timeoutSeconds: 600

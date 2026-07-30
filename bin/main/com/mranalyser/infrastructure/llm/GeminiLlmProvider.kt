@@ -1,64 +1,76 @@
 package com.mranalyser.infrastructure.llm
 
 import com.mranalyser.application.port.LlmProvider
-import com.mranalyser.domain.model.LlmReviewResult
-import com.mranalyser.domain.model.ReviewContext
-import io.ktor.client.HttpClient
-import io.ktor.client.call.body
-import io.ktor.client.engine.cio.CIO
-import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import com.mranalyser.application.port.LlmRequest
+import com.mranalyser.application.port.LlmResponse
+import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
-import io.ktor.serialization.kotlinx.json.json
+import io.ktor.client.statement.bodyAsText
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 
 class GeminiLlmProvider(
-    private val baseUrl: String,
     private val apiKey: String,
     private val model: String,
-    private val promptBuilder: PromptBuilder = PromptBuilder(),
-    private val parser: LlmResponseParser = LlmResponseParser()
+    private val baseUrl: String = "https://generativelanguage.googleapis.com",
+    private val settings: LlmTransportSettings = LlmTransportSettings()
 ) : LlmProvider {
-    private val json = Json { ignoreUnknownKeys = true }
-    private val client = HttpClient(CIO) {
-        install(ContentNegotiation) {
-            json(json)
-        }
-    }
+    override val name: String = "gemini:$model"
 
-    override suspend fun analyse(context: ReviewContext): LlmReviewResult {
-        val endpoint = "${baseUrl.trimEnd('/')}/v1beta/models/$model:generateContent?key=$apiKey"
+    private val client = buildLlmHttpClient(settings)
+
+    override suspend fun complete(request: LlmRequest): LlmResponse = safeCompletion(name) {
+        if (apiKey.isBlank()) {
+            return@safeCompletion LlmResponse.failed("API key do Gemini não configurada")
+        }
+
+        val endpoint = "${baseUrl.trimEnd('/')}/v1beta/models/$model:generateContent"
         val response = client.post(endpoint) {
+            header("x-goog-api-key", apiKey)
+            header("Content-Type", "application/json")
             setBody(
                 GeminiRequest(
-                    contents = listOf(
-                        GeminiContent(
-                            parts = listOf(GeminiPart(text = promptBuilder.build(context)))
-                        )
-                    ),
+                    systemInstruction = GeminiContent(parts = listOf(GeminiPart(request.system))),
+                    contents = listOf(GeminiContent(parts = listOf(GeminiPart(request.user)))),
                     generationConfig = GeminiGenerationConfig(
-                        temperature = 0.2,
-                        maxOutputTokens = 2048
+                        temperature = request.temperature,
+                        maxOutputTokens = request.maxOutputTokens,
+                        responseMimeType = if (settings.jsonMode) "application/json" else null
                     )
                 )
             )
-        }.body<GeminiResponse>()
+        }
 
-        val text = response.candidates
+        response.failureOrNull(name) { raw ->
+            runCatching { llmJson.decodeFromString<GeminiErrorResponse>(raw) }.getOrNull()?.error?.message
+        }?.let { return@safeCompletion LlmResponse.failed(it) }
+
+        val raw = response.bodyAsText()
+        val parsed = runCatching { llmJson.decodeFromString<GeminiResponse>(raw) }.getOrNull()
+            ?: return@safeCompletion LlmResponse.failed("resposta do Gemini não pôde ser desserializada")
+
+        val text = parsed.candidates
             .firstOrNull()
             ?.content
             ?.parts
-            ?.firstOrNull()
-            ?.text
+            ?.joinToString("") { it.text }
             .orEmpty()
 
-        return parser.parse(text)
+        if (text.isBlank()) {
+            val reason = parsed.candidates.firstOrNull()?.finishReason
+            return@safeCompletion LlmResponse.failed(
+                "Gemini retornou conteúdo vazio${reason?.let { " (finishReason=$it)" }.orEmpty()}"
+            )
+        }
+
+        LlmResponse(text)
     }
 }
 
 @Serializable
 private data class GeminiRequest(
+    @SerialName("system_instruction") val systemInstruction: GeminiContent? = null,
     val contents: List<GeminiContent>,
     val generationConfig: GeminiGenerationConfig
 )
@@ -70,13 +82,14 @@ private data class GeminiContent(
 
 @Serializable
 private data class GeminiPart(
-    val text: String
+    val text: String = ""
 )
 
 @Serializable
 private data class GeminiGenerationConfig(
     val temperature: Double,
-    val maxOutputTokens: Int
+    val maxOutputTokens: Int,
+    @SerialName("response_mime_type") val responseMimeType: String? = null
 )
 
 @Serializable
@@ -86,5 +99,18 @@ private data class GeminiResponse(
 
 @Serializable
 private data class GeminiCandidate(
-    val content: GeminiContent
+    val content: GeminiContent? = null,
+    @SerialName("finishReason") val finishReason: String? = null
+)
+
+@Serializable
+private data class GeminiErrorResponse(
+    val error: GeminiErrorPayload? = null
+)
+
+@Serializable
+private data class GeminiErrorPayload(
+    val code: Int? = null,
+    val message: String? = null,
+    val status: String? = null
 )

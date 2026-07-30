@@ -1,155 +1,151 @@
 package com.mranalyser.application.service
 
 import com.mranalyser.domain.model.Discussion
-import com.mranalyser.domain.model.ReviewCategory
 import com.mranalyser.domain.model.ReviewFinding
 
-class FindingDeduplicator {
-    fun deduplicate(findings: List<ReviewFinding>, discussions: List<Discussion>): List<ReviewFinding> {
-        val existingTexts = discussions
+/**
+ * Remove findings duplicados e findings que repetem uma discussão já existente no MR (item 31).
+ *
+ * Mudança de escopo em relação à V1: esta classe **não** decide mais se um finding é falso
+ * positivo. Aquela heurística usava regex em português (`talvez|poderia|considerar`) e ausência
+ * de campo `impact` para julgar validade — critério textual que descartava achados legítimos e
+ * mantinha achados especulativos bem redigidos. Julgar validade agora é papel da etapa de
+ * validação por LLM, que tem o código na mão; supressão objetiva de ruído é papel de
+ * [com.mranalyser.domain.policy.NoisePolicy].
+ *
+ * A comparação é baseada em Jaccard de tokens. Levenshtein sobre descrições completas — usado na
+ * V1 — é O(n·m) por par e quadrático no número de findings, sem ganho de precisão nesta tarefa.
+ */
+class FindingDeduplicator(
+    private val duplicateThreshold: Double = 0.68,
+    private val discussionCoverageThreshold: Double = 0.75,
+    private val minimumTokensForCoverage: Int = 3
+) {
+    data class Result(
+        val findings: List<ReviewFinding>,
+        val removedAsDuplicate: Int,
+        val removedAsAlreadyDiscussed: Int
+    )
+
+    fun deduplicate(findings: List<ReviewFinding>, discussions: List<Discussion>): List<ReviewFinding> =
+        analyse(findings, discussions).findings
+
+    fun analyse(findings: List<ReviewFinding>, discussions: List<Discussion>): Result {
+        val openDiscussionTokens = discussions
             .flatMap { it.notes }
-            .map { normalize(it.body) }
-            .toSet()
+            .filterNot { it.system }
+            // Discussão resolvida não impede um novo achado: o ponto pode ter voltado.
+            .filterNot { it.resolved }
+            .map { tokens(it.body) }
+            .filter { it.isNotEmpty() }
 
-        val filtered = findings
-            .filterNot { isLikelyFalsePositive(it) }
-            .sortedByDescending { it.confidence }
+        // Maior confiança primeiro: entre duplicatas, sobrevive a versão mais bem sustentada.
+        val ordered = findings.sortedWith(
+            compareByDescending<ReviewFinding> { it.confidence }
+                .thenByDescending { it.severity.weight }
+                .thenByDescending { if (it.hasEvidence) 1 else 0 }
+        )
 
-        val unique = mutableListOf<ReviewFinding>()
+        val kept = mutableListOf<ReviewFinding>()
+        val keptTokens = mutableListOf<Set<String>>()
+        var duplicates = 0
+        var alreadyDiscussed = 0
 
-        filtered.forEach { finding ->
-            val similarToDiscussion = finding.suggestedComment
-                ?.let { comment ->
-                    existingTexts.any { discussionText -> semanticSimilarity(normalize(comment), discussionText) >= 0.84 }
-                }
-                ?: false
+        ordered.forEach { finding ->
+            val findingTokens = tokens("${finding.title} ${finding.description}")
 
-            if (similarToDiscussion) {
+            if (openDiscussionTokens.any { alreadyCovered(finding, it) }) {
+                alreadyDiscussed++
                 return@forEach
             }
 
-            val duplicated = unique.any { existing -> isSemanticDuplicate(existing, finding) }
-            if (!duplicated) {
-                unique += finding
+            val duplicateIndex = kept.indices.firstOrNull { index ->
+                isDuplicate(kept[index], keptTokens[index], finding, findingTokens)
             }
+
+            if (duplicateIndex != null) {
+                duplicates++
+                kept[duplicateIndex] = merge(kept[duplicateIndex], finding)
+                return@forEach
+            }
+
+            kept += finding
+            keptTokens += findingTokens
         }
 
-        return unique
+        return Result(kept, duplicates, alreadyDiscussed)
     }
 
-    private fun isSemanticDuplicate(a: ReviewFinding, b: ReviewFinding): Boolean {
-        if (a.category != b.category) {
-            return false
-        }
+    /**
+     * "Este ponto já está contido em um comentário existente?" é uma relação de **contenção**,
+     * não de similaridade: a nota do revisor costuma ser mais curta e usar outras palavras, então
+     * Jaccard sobre o par inteiro subestima a sobreposição. Compara-se a descrição e o comentário
+     * sugerido separadamente, cada um contra o texto da nota.
+     */
+    private fun alreadyCovered(finding: ReviewFinding, discussionTokens: Set<String>): Boolean =
+        listOfNotNull(finding.description, finding.suggestedComment)
+            .map { tokens(it) }
+            .filter { it.size >= minimumTokensForCoverage }
+            .any { containment(it, discussionTokens) >= discussionCoverageThreshold }
 
-        if (a.file != b.file) {
-            return false
-        }
-
-        if (a.line != null && b.line != null && kotlin.math.abs(a.line - b.line) > 3) {
-            return false
-        }
-
-        val textA = normalize("${a.title} ${a.description}")
-        val textB = normalize("${b.title} ${b.description}")
-        val semantic = semanticSimilarity(textA, textB)
-        if (semantic >= 0.72) {
-            return true
-        }
-
-        val recA = normalize(a.recommendation.orEmpty())
-        val recB = normalize(b.recommendation.orEmpty())
-        val recommendationAligned = recA.isNotBlank() && recA == recB
-
-        val titleTokenOverlap = tokenOverlap(normalize(a.title), normalize(b.title))
-        return recommendationAligned && titleTokenOverlap >= 0.40
-    }
-
-    private fun isLikelyFalsePositive(finding: ReviewFinding): Boolean {
-        if (finding.confidence < 0.35) {
-            return true
-        }
-
-        val text = normalize("${finding.title} ${finding.description}")
-        if (text.length < 24) {
-            return true
-        }
-
-        val hasImpact = !finding.impact.isNullOrBlank()
-        val vaguePattern = Regex("(?i)(talvez|poderia|considerar|melhorar nome|adicionar comentario|criar constante)")
-
-        return when (finding.category) {
-            ReviewCategory.CODE_STYLE -> !hasImpact
-            ReviewCategory.DOCUMENTATION -> !hasImpact && finding.confidence < 0.80
-            ReviewCategory.MAINTAINABILITY -> vaguePattern.containsMatchIn(text) && !hasImpact
-            else -> false
-        }
-    }
-
-    private fun semanticSimilarity(a: String, b: String): Double {
-        if (a == b) {
-            return 1.0
-        }
-
-        val tokensA = tokens(a)
-        val tokensB = tokens(b)
-        if (tokensA.isEmpty() || tokensB.isEmpty()) {
+    private fun containment(part: Set<String>, whole: Set<String>): Double {
+        if (part.isEmpty() || whole.isEmpty()) {
             return 0.0
         }
-
-        val intersection = tokensA.intersect(tokensB).size.toDouble()
-        val union = tokensA.union(tokensB).size.toDouble()
-        val jaccard = if (union == 0.0) 0.0 else intersection / union
-
-        val levenshtein = normalizedLevenshtein(a, b)
-        return (jaccard * 0.7) + (levenshtein * 0.3)
+        return part.count { it in whole }.toDouble() / part.size
     }
 
-    private fun tokenOverlap(a: String, b: String): Double {
-        val tokensA = tokens(a)
-        val tokensB = tokens(b)
-        if (tokensA.isEmpty() || tokensB.isEmpty()) {
+    private fun isDuplicate(
+        existing: ReviewFinding,
+        existingTokens: Set<String>,
+        candidate: ReviewFinding,
+        candidateTokens: Set<String>
+    ): Boolean {
+        if (existing.file != candidate.file) {
+            return false
+        }
+        if (existing.line != null && candidate.line != null && kotlin.math.abs(existing.line - candidate.line) > 5) {
+            return false
+        }
+        return jaccard(existingTokens, candidateTokens) >= duplicateThreshold
+    }
+
+    /**
+     * A duplicata pode trazer campos que o vencedor não tem (evidência, cenário de falha).
+     * Descartá-la inteira perderia informação verificável.
+     */
+    private fun merge(winner: ReviewFinding, duplicate: ReviewFinding): ReviewFinding = winner.copy(
+        evidence = winner.evidence ?: duplicate.evidence,
+        failureScenario = winner.failureScenario ?: duplicate.failureScenario,
+        impact = winner.impact ?: duplicate.impact,
+        recommendation = winner.recommendation ?: duplicate.recommendation,
+        suggestedComment = winner.suggestedComment ?: duplicate.suggestedComment,
+        componentsAffected = (winner.componentsAffected + duplicate.componentsAffected).distinct(),
+        relatedFiles = (winner.relatedFiles + duplicate.relatedFiles).distinct()
+    )
+
+    private fun jaccard(a: Set<String>, b: Set<String>): Double {
+        if (a.isEmpty() || b.isEmpty()) {
             return 0.0
         }
-        val intersection = tokensA.intersect(tokensB).size.toDouble()
-        val minSize = minOf(tokensA.size, tokensB.size).toDouble().coerceAtLeast(1.0)
-        return intersection / minSize
+        val intersection = a.count { it in b }.toDouble()
+        val union = (a.size + b.size - intersection)
+        return if (union == 0.0) 0.0 else intersection / union
     }
 
-    private fun tokens(text: String): Set<String> {
-        val stopwords = setOf("a", "o", "de", "da", "do", "the", "and", "or", "to", "em", "para")
-        return text
-            .split("[^a-zA-Z0-9]+".toRegex())
-            .map { it.lowercase() }
-            .filter { it.length > 2 && it !in stopwords }
-            .toSet()
-    }
+    private fun tokens(text: String): Set<String> = text
+        .lowercase()
+        .split(NON_WORD)
+        .filter { it.length > 2 && it !in STOPWORDS }
+        .toSet()
 
-    private fun normalizedLevenshtein(a: String, b: String): Double {
-        val distance = levenshteinDistance(a, b)
-        val maxLen = maxOf(a.length, b.length).coerceAtLeast(1)
-        return 1.0 - (distance.toDouble() / maxLen)
-    }
+    private companion object {
+        val NON_WORD = Regex("[^a-z0-9áàâãéêíóôõúç]+")
 
-    private fun levenshteinDistance(a: String, b: String): Int {
-        val dp = Array(a.length + 1) { IntArray(b.length + 1) }
-        for (i in 0..a.length) dp[i][0] = i
-        for (j in 0..b.length) dp[0][j] = j
-
-        for (i in 1..a.length) {
-            for (j in 1..b.length) {
-                val cost = if (a[i - 1] == b[j - 1]) 0 else 1
-                dp[i][j] = minOf(
-                    dp[i - 1][j] + 1,
-                    dp[i][j - 1] + 1,
-                    dp[i - 1][j - 1] + cost
-                )
-            }
-        }
-        return dp[a.length][b.length]
-    }
-
-    private fun normalize(text: String): String {
-        return text.lowercase().replace("\\s+".toRegex(), " ").trim()
+        val STOPWORDS = setOf(
+            "que", "com", "para", "por", "uma", "dos", "das", "nao", "não", "esta", "este",
+            "isso", "pode", "mais", "ser", "sem", "the", "and", "for", "with", "that", "this",
+            "are", "was", "not", "can", "may", "from", "have", "has", "but", "will"
+        )
     }
 }

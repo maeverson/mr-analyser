@@ -3,29 +3,16 @@ package com.mranalyser.cli
 import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
-import com.mranalyser.application.usecase.AnalyseMergeRequestUseCase
-import com.mranalyser.application.service.FindingDeduplicator
-import com.mranalyser.application.service.MergeRecommendationCalculator
-import com.mranalyser.application.service.MergeRequestAnalyzer
-import com.mranalyser.application.service.ReviewChunker
 import com.mranalyser.application.port.MergeRequestProvider
+import com.mranalyser.application.usecase.AnalyseMergeRequestUseCase
 import com.mranalyser.domain.model.FileChange
 import com.mranalyser.domain.model.MergeRequest
-import com.mranalyser.domain.rule.DebugCodeRule
-import com.mranalyser.domain.rule.LargeChangeRule
-import com.mranalyser.domain.rule.SecretsRule
-import com.mranalyser.domain.rule.TestChangeRule
-import com.mranalyser.domain.rule.TodoRule
+import com.mranalyser.infrastructure.config.AnalyzerFactory
 import com.mranalyser.infrastructure.config.ConfigLoader
-import com.mranalyser.infrastructure.gitlab.GitLabClient
 import com.mranalyser.infrastructure.gitlab.GitLabApiException
+import com.mranalyser.infrastructure.gitlab.GitLabClient
 import com.mranalyser.infrastructure.gitlab.GitLabMergeRequestProvider
 import com.mranalyser.infrastructure.gitlab.GitLabUrlParser
-import com.mranalyser.infrastructure.llm.AnthropicLlmProvider
-import com.mranalyser.infrastructure.llm.GeminiLlmProvider
-import com.mranalyser.infrastructure.llm.NoOpLlmProvider
-import com.mranalyser.infrastructure.llm.OllamaLlmProvider
-import com.mranalyser.infrastructure.llm.OpenAiLlmProvider
 import com.mranalyser.infrastructure.render.ConsoleReportRenderer
 import com.mranalyser.infrastructure.render.GitLabCommentRenderer
 import com.mranalyser.infrastructure.render.JsonReportRenderer
@@ -43,7 +30,18 @@ class AnalyseCommand : CliktCommand(name = "analyse") {
     private val model by option("--model", help = "Modelo de LLM")
     private val output by option("--output", help = "Formato de saida: console|markdown|json|gitlab-comments")
     private val verbose by option("--verbose", help = "Ativa logs detalhados").flag(default = false)
-    private val showLowConfidence by option("--show-low-confidence", help = "Exibe findings com baixa confianca").flag(default = false)
+    private val showLowConfidence by option(
+        "--show-low-confidence",
+        help = "Exibe findings abaixo do limite de confianca (nao participam da recomendacao)"
+    ).flag(default = false)
+    private val noContext by option(
+        "--no-context",
+        help = "Desativa a busca de contexto relacionado no repositorio local"
+    ).flag(default = false)
+    private val fastMode by option(
+        "--fast",
+        help = "Executa apenas o review local, sem entendimento, validacao, cross-file e parecer"
+    ).flag(default = false)
 
     override fun run() = runBlocking {
         var gitLabClient: GitLabClient? = null
@@ -51,11 +49,25 @@ class AnalyseCommand : CliktCommand(name = "analyse") {
         try {
             require(url != null || mr != null) { "Informe --url ou --mr" }
 
-            val config = ConfigLoader().load(
+            val loaded = ConfigLoader().load(
                 verbose = verbose,
                 showLowConfidence = showLowConfidence,
                 providerOverride = provider,
                 modelOverride = model
+            )
+
+            val config = loaded.copy(
+                context = loaded.context.copy(enabled = loaded.context.enabled && !noContext),
+                review = if (fastMode) {
+                    loaded.review.copy(
+                        understandingEnabled = false,
+                        validationEnabled = false,
+                        crossFileEnabled = false,
+                        finalAssessmentEnabled = false
+                    )
+                } else {
+                    loaded.review
+                }
             )
 
             val (resolvedProject, resolvedMr, resolvedHost) = resolveTarget(project, mr, url)
@@ -65,73 +77,19 @@ class AnalyseCommand : CliktCommand(name = "analyse") {
                 token = config.gitlabToken
             )
 
-            val llmProvider = when (config.llm.provider.lowercase()) {
-                "openai" -> {
-                    val key = config.llm.apiKey
-                    if (key.isNullOrBlank()) {
-                        NoOpLlmProvider()
-                    } else {
-                        OpenAiLlmProvider(
-                            apiKey = key,
-                            model = config.llm.model,
-                            baseUrl = config.llm.url ?: "https://api.openai.com/v1"
-                        )
-                    }
-                }
-                "ollama" -> OllamaLlmProvider(
-                    baseUrl = config.llm.url ?: "http://localhost:11434",
-                    model = config.llm.model,
-                    apiKey = config.llm.apiKey
+            val llmProvider = AnalyzerFactory.createLlmProvider(config)
+            if (llmProvider.name == "noop") {
+                echo(
+                    "Aviso: nenhum provedor de LLM configurado. A analise sera limitada a regras " +
+                        "estaticas e sinais arquiteturais.",
+                    err = true
                 )
-                "anthropic" -> {
-                    val key = config.llm.apiKey
-                    if (key.isNullOrBlank()) {
-                        NoOpLlmProvider()
-                    } else {
-                        AnthropicLlmProvider(
-                            apiKey = key,
-                            model = config.llm.model,
-                            baseUrl = config.llm.url ?: "https://api.anthropic.com"
-                        )
-                    }
-                }
-                "gemini" -> {
-                    val key = config.llm.apiKey
-                    if (key.isNullOrBlank()) {
-                        NoOpLlmProvider()
-                    } else {
-                        GeminiLlmProvider(
-                            apiKey = key,
-                            model = config.llm.model,
-                            baseUrl = config.llm.url ?: "https://generativelanguage.googleapis.com"
-                        )
-                    }
-                }
-                else -> NoOpLlmProvider()
             }
 
-            val repositoryContextProvider = LocalRepositoryContextProvider()
-
-            val analyzer = MergeRequestAnalyzer(
-                rules = listOf(
-                    SecretsRule(),
-                    DebugCodeRule(),
-                    TodoRule(),
-                    LargeChangeRule(maxLinesPerFile = config.limits.maxFileLines),
-                    TestChangeRule()
-                ),
+            val analyzer = AnalyzerFactory.createAnalyzer(
+                config = config,
                 llmProvider = llmProvider,
-                reviewChunker = ReviewChunker(
-                    maxDiffLines = config.limits.maxDiffLines,
-                    maxFileLines = config.limits.maxFileLines
-                ),
-                deduplicator = FindingDeduplicator(),
-                recommendationCalculator = MergeRecommendationCalculator(),
-                minimumConfidence = config.review.minimumConfidence,
-                ignoredCategories = config.review.ignoredCategories,
-                showLowConfidence = config.review.showLowConfidence,
-                repositoryContextProvider = repositoryContextProvider,
-                maxConcurrency = config.maxConcurrency
+                repositoryContextProvider = LocalRepositoryContextProvider()
             )
 
             val baseProvider = GitLabMergeRequestProvider(gitLabClient)
@@ -162,9 +120,8 @@ class AnalyseCommand : CliktCommand(name = "analyse") {
             }
 
             val renderedReport = renderer.render(mrData, report)
-            val reportWriter = ReportFileWriter()
-            val reportPath = reportWriter.writeReport(
-                mrIdentifier = "mr-${resolvedMr}",
+            val reportPath = ReportFileWriter().writeReport(
+                mrIdentifier = "mr-$resolvedMr",
                 content = renderedReport,
                 extension = when (output?.lowercase()) {
                     "json" -> ".json"
@@ -208,24 +165,54 @@ class AnalyseCommand : CliktCommand(name = "analyse") {
         if (patterns.isEmpty()) {
             return changes
         }
+        val compiled = patterns.map(::globToRegex)
         return changes.filterNot { change ->
-            patterns.any { glob -> globToRegex(glob).matches(change.newPath) }
+            compiled.any { it.matches(change.newPath) || it.matches(change.oldPath) }
         }
     }
 
+    /**
+     * Conversão de glob para regex.
+     *
+     * A versão anterior usava `Regex.escape(glob)` e depois tentava substituir a estrela no
+     * resultado. `Regex.escape` devolve `\Q...\E`, então as substituições nunca casavam e
+     * **nenhum wildcard funcionava**: um `ignoredPaths` com `*.lock` ou `generated` seguido de
+     * estrela dupla não filtrava nada. Aqui o escape é feito caractere a caractere, preservando
+     * estrela simples, estrela dupla e interrogação.
+     */
     private fun globToRegex(glob: String): Regex {
-        val escaped = Regex.escape(glob)
-            .replace("\\*\\*", ".*")
-            .replace("\\*", "[^/]*")
-            .replace("\\?", ".")
-        return Regex("^$escaped$")
+        val pattern = StringBuilder("^")
+        var index = 0
+
+        while (index < glob.length) {
+            when (val char = glob[index]) {
+                '*' -> if (index + 1 < glob.length && glob[index + 1] == '*') {
+                    pattern.append(".*")
+                    index++
+                } else {
+                    pattern.append("[^/]*")
+                }
+
+                '?' -> pattern.append("[^/]")
+                '.', '(', ')', '+', '|', '^', '$', '@', '%', '{', '}', '[', ']', '\\' ->
+                    pattern.append('\\').append(char)
+
+                else -> pattern.append(char)
+            }
+            index++
+        }
+
+        // "generated/**" deve casar também com o próprio diretório e com "generated/a/b.kt".
+        return Regex(pattern.append('$').toString().replace("/.*$", "(/.*)?$"))
     }
 
     private fun friendlyGitLabError(exception: GitLabApiException): String {
         return when (exception.statusCode) {
             401 -> "Erro ao consultar GitLab: autenticação negada. Verifique GITLAB_TOKEN."
             403 -> "Erro ao consultar GitLab: acesso negado. Verifique permissões do token para este projeto."
-            404 -> "Erro ao consultar GitLab: projeto ou MR não encontrado. Em grupos privados como ctbz, isso também pode indicar falta de SSO/SSO ou token sem acesso ao grupo/projeto. Verifique --url/--project, permissões do token e se o projeto está visível para sua conta."
+            404 -> "Erro ao consultar GitLab: projeto ou MR não encontrado. Em grupos privados, isso também " +
+                "pode indicar falta de SSO ou token sem acesso ao grupo/projeto. Verifique --url/--project, " +
+                "permissões do token e se o projeto está visível para sua conta."
             else -> "Erro ao consultar GitLab: ${exception.message}"
         }
     }

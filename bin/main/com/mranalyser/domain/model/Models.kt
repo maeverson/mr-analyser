@@ -15,12 +15,24 @@ data class Commit(
 data class Discussion(
     val id: String,
     val notes: List<DiscussionNote>
-)
+) {
+    /** Uma discussão é considerada resolvida quando todas as notas resolvíveis estão resolvidas. */
+    val resolved: Boolean
+        get() {
+            val resolvable = notes.filter { it.resolvable }
+            return resolvable.isNotEmpty() && resolvable.all { it.resolved }
+        }
+}
 
 data class DiscussionNote(
     val id: String,
     val author: Author,
-    val body: String
+    val body: String,
+    val system: Boolean = false,
+    val resolvable: Boolean = false,
+    val resolved: Boolean = false,
+    val file: String? = null,
+    val line: Int? = null
 )
 
 data class FileChange(
@@ -31,8 +43,12 @@ data class FileChange(
     val renamed: Boolean,
     val diff: String,
     val linesAdded: Int = 0,
-    val linesRemoved: Int = 0
-)
+    val linesRemoved: Int = 0,
+    val generated: Boolean = false
+) {
+    val path: String get() = if (deleted) oldPath else newPath
+    val totalLines: Int get() = linesAdded + linesRemoved
+}
 
 data class MergeRequest(
     val id: Long,
@@ -48,82 +64,48 @@ data class MergeRequest(
     val approvalsRequired: Int? = null,
     val changes: List<FileChange>,
     val commits: List<Commit>,
-    val discussions: List<Discussion>
+    val discussions: List<Discussion>,
+    val projectPath: String? = null,
+    val webUrl: String? = null
 )
 
-enum class Severity {
-    CRITICAL,
-    HIGH,
-    MEDIUM,
-    LOW,
-    INFO
+/**
+ * Agrupamento arquitetural de um arquivo alterado. Usado para montar chunks coesos
+ * (evita misturar domínio, persistência e integração no mesmo prompt) e para calibrar
+ * quais aspectos o reviewer deve investigar em cada grupo.
+ */
+enum class ChangeGroup {
+    DOMAIN,
+    APPLICATION,
+    PERSISTENCE,
+    INTEGRATION,
+    API,
+    MESSAGING,
+    MIGRATION,
+    CONFIGURATION,
+    CONTRACT,
+    TEST,
+    BUILD,
+    DOCUMENTATION,
+    OTHER;
+
+    val isProductionCode: Boolean
+        get() = this !in setOf(TEST, BUILD, DOCUMENTATION)
+
+    val label: String
+        get() = when (this) {
+            DOMAIN -> "domínio"
+            APPLICATION -> "aplicação"
+            PERSISTENCE -> "persistência"
+            INTEGRATION -> "integração"
+            API -> "API"
+            MESSAGING -> "mensageria"
+            MIGRATION -> "migration"
+            CONFIGURATION -> "configuração"
+            CONTRACT -> "contrato"
+            TEST -> "testes"
+            BUILD -> "build"
+            DOCUMENTATION -> "documentação"
+            OTHER -> "outros"
+        }
 }
-
-enum class ReviewCategory {
-    BUG,
-    SECURITY,
-    ARCHITECTURE,
-    DESIGN,
-    PERFORMANCE,
-    CONCURRENCY,
-    RELIABILITY,
-    OBSERVABILITY,
-    TESTABILITY,
-    MAINTAINABILITY,
-    CODE_STYLE,
-    COMPATIBILITY,
-    DOCUMENTATION
-}
-
-data class ReviewFinding(
-    val severity: Severity,
-    val category: ReviewCategory,
-    val file: String?,
-    val line: Int?,
-    val title: String,
-    val description: String,
-    val impact: String?,
-    val recommendation: String?,
-    val suggestedComment: String?,
-    val confidence: Double
-)
-
-enum class MergeRecommendation {
-    APPROVE,
-    APPROVE_WITH_SUGGESTIONS,
-    REQUEST_CHANGES
-}
-
-data class ReviewReport(
-    val summary: String,
-    val findings: List<ReviewFinding>,
-    val questions: List<String>,
-    val positivePoints: List<String>,
-    val recommendation: MergeRecommendation
-)
-
-data class RepositoryFileContext(
-    val referencePath: String,
-    val relatedPath: String,
-    val content: String
-)
-
-data class ReviewContext(
-    val title: String,
-    val description: String?,
-    val sourceBranch: String,
-    val targetBranch: String,
-    val changedFiles: List<String>,
-    val diff: String,
-    val commits: List<Commit>,
-    val existingDiscussions: List<String>,
-    val repositoryContext: List<RepositoryFileContext> = emptyList()
-)
-
-data class LlmReviewResult(
-    val summary: String,
-    val findings: List<ReviewFinding>,
-    val questions: List<String>,
-    val positivePoints: List<String>,
-    val suggestedRecommendation: MergeRecommendation? = null
-)

@@ -5,10 +5,36 @@
       {
         "id": 10,
         "body": "Podemos definir timeout explicitamente?",
+        "system": false,
+        "resolvable": true,
+        "resolved": false,
         "author": {
           "id": 2,
           "name": "Reviewer",
           "username": "reviewer"
+        },
+        "position": {
+          "old_path": "src/main/kotlin/PaymentService.kt",
+          "new_path": "src/main/kotlin/PaymentService.kt",
+          "old_line": null,
+          "new_line": 3
+        }
+      }
+    ]
+  },
+  {
+    "id": "disc_2",
+    "notes": [
+      {
+        "id": 11,
+        "body": "changed target branch from develop to main",
+        "system": true,
+        "resolvable": false,
+        "resolved": false,
+        "author": {
+          "id": 1,
+          "name": "Gabriel",
+          "username": "gabriel"
         }
       }
     ]
