@@ -1,8 +1,0 @@
-[
-  {
-    "id": "abcdef1234567890",
-    "title": "Add fallback logic",
-    "message": "Add fallback logic\n\nQuando o Redis está indisponível, cai para o banco em vez de propagar o erro.",
-    "author_name": "Gabriel"
-  }
-]
