@@ -19,7 +19,13 @@ import com.mranalyser.domain.model.ReviewFinding
 class FindingDeduplicator(
     private val duplicateThreshold: Double = 0.68,
     private val discussionCoverageThreshold: Double = 0.75,
-    private val minimumTokensForCoverage: Int = 3
+    private val minimumTokensForCoverage: Int = 3,
+    private val titleThreshold: Double = 0.6,
+    private val nearbyLines: Int = 5,
+    private val sameAreaLines: Int = 15,
+    private val statementThreshold: Double = 0.5,
+    private val restatementThreshold: Double = 0.6,
+    private val sameTitleAnywhere: Double = 0.9
 ) {
     data class Result(
         val findings: List<ReviewFinding>,
@@ -101,13 +107,42 @@ class FindingDeduplicator(
         candidate: ReviewFinding,
         candidateTokens: Set<String>
     ): Boolean {
+        val sameTitle = jaccard(tokens(existing.title), tokens(candidate.title)) >= sameTitleAnywhere
         if (existing.file != candidate.file) {
+            // O mesmo problema relatado a partir de dois arquivos (o mapper e o adapter que o
+            // alimenta) chega com título idêntico; o prompt pede um finding por problema.
+            return sameTitle
+        }
+        val distance = if (existing.line != null && candidate.line != null) {
+            kotlin.math.abs(existing.line - candidate.line)
+        } else {
+            0
+        }
+        if (distance > sameAreaLines) {
             return false
         }
-        if (existing.line != null && candidate.line != null && kotlin.math.abs(existing.line - candidate.line) > 5) {
-            return false
+        // Mesmo ponto reescrito por chunks diferentes costuma manter o título e variar toda a
+        // descrição — o Jaccard do conjunto ficava abaixo do limiar e o relatório repetia o achado.
+        if (jaccard(tokens(existing.title), tokens(candidate.title)) >= titleThreshold) {
+            return true
         }
-        return jaccard(existingTokens, candidateTokens) >= duplicateThreshold
+        return distance <= nearbyLines && jaccard(existingTokens, candidateTokens) >= duplicateThreshold
+    }
+
+    /**
+     * Pontos positivos e perguntas chegam de cada chunk e da etapa cross-file com a mesma ideia
+     * em redações diferentes; `distinct()` só remove cópias exatas. Mantém a primeira de cada
+     * grupo de frases semelhantes, até [max].
+     */
+    fun distinctStatements(values: List<String>, max: Int = Int.MAX_VALUE): List<String> {
+        val kept = mutableListOf<Pair<String, Set<String>>>()
+        values.map { it.trim() }.filter { it.isNotEmpty() }.forEach { value ->
+            val valueTokens = tokens(value).map(::singular).toSet()
+            if (kept.none { (_, existing) -> jaccard(existing, valueTokens) >= statementThreshold }) {
+                kept += value to valueTokens
+            }
+        }
+        return kept.take(max).map { it.first }
     }
 
     /**
@@ -121,8 +156,25 @@ class FindingDeduplicator(
         recommendation = winner.recommendation ?: duplicate.recommendation,
         suggestedComment = winner.suggestedComment ?: duplicate.suggestedComment,
         componentsAffected = (winner.componentsAffected + duplicate.componentsAffected).distinct(),
-        relatedFiles = (winner.relatedFiles + duplicate.relatedFiles).distinct()
+        // Duplicata de outro arquivo: o local continua visível como arquivo relacionado.
+        relatedFiles = (winner.relatedFiles + listOfNotNull(duplicate.file.takeIf { it != winner.file }) +
+            duplicate.relatedFiles).distinct()
     )
+
+    /** A frase está contida no título ou na descrição de algum dos findings? */
+    fun restatesAny(statement: String, findings: List<ReviewFinding>): Boolean {
+        val statementTokens = tokens(statement).map(::singular).toSet()
+        if (statementTokens.size < minimumTokensForCoverage) {
+            return false
+        }
+        return findings.any { finding ->
+            val findingTokens = tokens("${finding.title} ${finding.description}").map(::singular).toSet()
+            containment(statementTokens, findingTokens) >= restatementThreshold
+        }
+    }
+
+    private fun singular(token: String): String =
+        if (token.length > 4 && token.endsWith('s')) token.dropLast(1) else token
 
     private fun jaccard(a: Set<String>, b: Set<String>): Double {
         if (a.isEmpty() || b.isEmpty()) {

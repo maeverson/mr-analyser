@@ -1,5 +1,7 @@
 package com.mranalyser.application.llm.prompt
 
+import com.mranalyser.application.llm.skill.ReviewSkillCatalog
+import com.mranalyser.application.llm.skill.SkillTarget
 import com.mranalyser.application.port.LlmPurpose
 import com.mranalyser.application.port.LlmRequest
 import com.mranalyser.application.review.ChunkReviewInput
@@ -12,7 +14,8 @@ import com.mranalyser.domain.model.ChangeGroup
  * checklist de um consumer de Kafka gera ruído. O foco por grupo está em [focusFor].
  */
 class LocalReviewPrompt(
-    private val sections: PromptSections = PromptSections()
+    private val sections: PromptSections = PromptSections(),
+    private val skills: ReviewSkillCatalog = ReviewSkillCatalog.EMPTY
 ) {
     fun build(input: ChunkReviewInput, maxOutputTokens: Int): LlmRequest = LlmRequest(
         purpose = LlmPurpose.LOCAL_REVIEW,
@@ -36,6 +39,10 @@ class LocalReviewPrompt(
             appendLine()
             appendLine(ReviewPromptPolicy.DEEP_REVIEW_CHECKLIST)
             appendLine()
+            skillsFor(input).takeIf { it.isNotBlank() }?.let {
+                appendLine(it)
+                appendLine()
+            }
             appendLine(sections.mergeRequestHeader(input.overview))
             sections.understanding(input.understanding).takeIf { it.isNotBlank() }?.let {
                 appendLine()
@@ -51,6 +58,12 @@ class LocalReviewPrompt(
             appendLine(sections.discussions(input.discussions))
             appendLine()
             appendLine(sections.relatedContext(input.relatedContext))
+            sections.knowledgeBase(input.knowledge).takeIf { it.isNotBlank() }?.let {
+                appendLine()
+                appendLine(it)
+                appendLine()
+                appendLine(CONTRACT_CHECK)
+            }
             appendLine()
             appendLine("## DIFF A REVISAR NESTE CHUNK")
             input.files.forEach { file ->
@@ -63,6 +76,11 @@ class LocalReviewPrompt(
         maxOutputTokens = maxOutputTokens,
         temperature = 0.1,
         label = "chunk ${input.chunkIndex}/${input.chunkCount} (${input.group.name})"
+    )
+
+    private fun skillsFor(input: ChunkReviewInput): String = skills.render(
+        LlmPurpose.LOCAL_REVIEW,
+        input.files.map { SkillTarget(it.path, it.group, it.annotatedDiff) }
     )
 
     /**
@@ -173,6 +191,18 @@ Cada linha vem no formato: `TAG   NUMERO | conteúdo`
 
 Ao preencher "line", use o número mostrado na linha `ADD` ou `ctx` correspondente.
 Foque nas linhas `ADD` e no efeito que elas produzem no fluxo mostrado pelas linhas `ctx`.
+""".trim()
+
+        val CONTRACT_CHECK = """
+## CONFERÊNCIA CONTRA A DOCUMENTAÇÃO
+Before anything else, list to yourself the concrete, checkable rules in the documents above that
+concern the files of THIS chunk: status codes, error responses, fields and types, data sources,
+filters, cardinality ("more than one -> 503"), defaults, ordering. For each rule, find the code in
+the diff that implements it.
+- Implemented as documented: nothing to report (it may be a positive point).
+- Implemented differently: a finding citing the document id (D1, D2...) and the code line — type
+  BUG/RISK only if the document is ACEITO, otherwise QUESTION.
+- Not implemented in this chunk: say nothing; another chunk may implement it.
 """.trim()
 
         val SCHEMA = """

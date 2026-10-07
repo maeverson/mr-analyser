@@ -19,7 +19,13 @@ data class LlmRequest(
     val maxOutputTokens: Int = 4096,
     val temperature: Double = 0.1,
     /** Identificação legível do alvo (ex.: "chunk 2/5") usada apenas em log e diagnóstico. */
-    val label: String = ""
+    val label: String = "",
+    /**
+     * A etapa ganha com raciocínio estendido do modelo (modo "thinking"). Só a validação pede:
+     * é onde refutar um candidato exige pensar, e é uma chamada por lote, não por chunk.
+     * Provider sem suporte ignora.
+     */
+    val reasoning: Boolean = false
 )
 
 /**

@@ -1,5 +1,7 @@
 package com.mranalyser.application.llm.prompt
 
+import com.mranalyser.application.llm.skill.ReviewSkillCatalog
+import com.mranalyser.application.llm.skill.SkillTarget
 import com.mranalyser.application.port.LlmPurpose
 import com.mranalyser.application.port.LlmRequest
 import com.mranalyser.application.review.ValidationInput
@@ -13,7 +15,8 @@ import com.mranalyser.application.review.ValidationInput
  * produz confirmação complacente; pedir "refute" produz descarte de falso positivo.
  */
 class FindingValidationPrompt(
-    private val sections: PromptSections = PromptSections()
+    private val sections: PromptSections = PromptSections(),
+    private val skills: ReviewSkillCatalog = ReviewSkillCatalog.EMPTY
 ) {
     fun build(input: ValidationInput, maxOutputTokens: Int): LlmRequest = LlmRequest(
         purpose = LlmPurpose.VALIDATION,
@@ -30,6 +33,10 @@ class FindingValidationPrompt(
         user = buildString {
             appendLine(TASK)
             appendLine()
+            skillsFor(input).takeIf { it.isNotBlank() }?.let {
+                appendLine(it)
+                appendLine()
+            }
             appendLine(sections.mergeRequestHeader(input.overview))
             sections.understanding(input.understanding).takeIf { it.isNotBlank() }?.let {
                 appendLine()
@@ -39,6 +46,10 @@ class FindingValidationPrompt(
             appendLine(sections.discussions(input.discussions))
             appendLine()
             appendLine(sections.relatedContext(input.relatedContext))
+            sections.knowledgeBase(input.knowledge).takeIf { it.isNotBlank() }?.let {
+                appendLine()
+                appendLine(it)
+            }
             appendLine()
             appendLine("## FINDINGS CANDIDATOS")
             input.candidates.forEachIndexed { index, finding ->
@@ -67,8 +78,28 @@ class FindingValidationPrompt(
         },
         maxOutputTokens = maxOutputTokens,
         temperature = 0.0,
-        label = "validação de ${input.candidates.size} candidatos"
+        label = "validação de ${input.candidates.size} candidatos",
+        reasoning = true
     )
+
+    /**
+     * A validação recebe as skills dos arquivos citados pelos candidatos: é onde a seção de
+     * falsos positivos conhecidos do stack derruba o que o review local inventou.
+     */
+    private fun skillsFor(input: ValidationInput): String {
+        val groups = input.overview.files.associate { it.path to it.group }
+        val targets = input.candidates.mapIndexedNotNull { index, finding ->
+            val file = finding.file ?: return@mapIndexedNotNull null
+            val text = listOfNotNull(
+                finding.title,
+                finding.description,
+                finding.evidence,
+                input.evidenceExcerpts["F${index + 1}"]
+            ).joinToString("\n")
+            SkillTarget(file, groups[file], text)
+        }
+        return skills.render(LlmPurpose.VALIDATION, targets)
+    }
 
     private companion object {
         val SYSTEM_EXTRA = """
@@ -88,7 +119,8 @@ For EACH candidate below, try to refute it. Answer these six questions internall
 2. Is the described impact plausible given what the code actually does?
 3. Is there any context here that invalidates the finding — including the related-context section
    showing that the "missing" retry/timeout/transaction/validation already exists elsewhere,
-   or an existing discussion that already covers it?
+   an existing discussion that already covers it, or a documented decision in the knowledge-base
+   section that makes the behaviour intentional?
 4. Is it a real problem, or only a preference?
 5. Is it worth interrupting the developer with this comment?
 6. Does the comment help improve the MR?

@@ -93,9 +93,20 @@ class FindingDeduplicatorTest {
     }
 
     @Test
-    fun `nao deve deduplicar findings de arquivos diferentes`() {
+    fun `mesmo problema em arquivos diferentes vira um finding sem perder o outro local`() {
         val a = finding(title = "Timeout ausente", description = "Falta timeout explicito").copy(file = "A.kt")
         val b = finding(title = "Timeout ausente", description = "Falta timeout explicito").copy(file = "B.kt")
+
+        val result = deduplicator.deduplicate(listOf(a, b), emptyList())
+
+        assertEquals(1, result.size)
+        assertTrue("B.kt" in result.single().relatedFiles || "A.kt" in result.single().relatedFiles)
+    }
+
+    @Test
+    fun `problemas diferentes em arquivos diferentes continuam separados`() {
+        val a = finding(title = "Timeout ausente", description = "Falta timeout explicito").copy(file = "A.kt")
+        val b = finding(title = "Retry sem backoff", description = "Retry imediato em loop").copy(file = "B.kt")
 
         assertEquals(2, deduplicator.deduplicate(listOf(a, b), emptyList()).size)
     }

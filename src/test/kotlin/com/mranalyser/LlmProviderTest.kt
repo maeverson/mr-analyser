@@ -144,6 +144,27 @@ class LlmProviderTest {
     }
 
     @Test
+    fun `factory deve respeitar timeout do ollama sem repetir a geracao`() = runBlocking {
+        server.stubFor(
+            post(urlPathEqualTo("/api/generate")).willReturn(
+                aResponse().withFixedDelay(2_500)
+                    .withBody("""{"response":"ok","done":true}""")
+            )
+        )
+        val loaded = com.mranalyser.infrastructure.config.ConfigLoader()
+            .load(false, false, "ollama", "m")
+        val config = loaded.copy(llm = loaded.llm.copy(
+            url = baseUrl(), timeoutSeconds = 1, maxRetries = 2
+        ))
+        val response = com.mranalyser.infrastructure.config.AnalyzerFactory
+            .createLlmProvider(config).complete(request)
+
+        assertFalse(response.successful)
+        assertTrue(response.failure!!.contains("timeout", ignoreCase = true))
+        assertEquals(1, server.allServeEvents.size)
+    }
+
+    @Test
     fun `ollama deve enviar system e limite de tokens`() = runBlocking {
         server.stubFor(
             post(urlPathEqualTo("/api/generate")).willReturn(
@@ -160,6 +181,62 @@ class LlmProviderTest {
         val body = server.allServeEvents.single().request.bodyAsString
         assertTrue(body.contains("\"system\":\"instruções de sistema\""))
         assertTrue(body.contains("\"num_predict\":4096"))
+    }
+
+    @Test
+    fun `ollama nao deve enviar think quando o modo nao esta configurado`() = runBlocking {
+        server.stubFor(
+            post(urlPathEqualTo("/api/generate")).willReturn(aResponse().withBody("""{"response":"ok","done":true}"""))
+        )
+
+        OllamaLlmProvider(model = "m", baseUrl = baseUrl()).complete(request.copy(reasoning = true))
+
+        assertFalse(server.allServeEvents.single().request.bodyAsString.contains("\"think\""))
+    }
+
+    @Test
+    fun `ollama por etapa deve pensar so onde a etapa pede e somar o orcamento de raciocinio`() = runBlocking {
+        server.stubFor(
+            post(urlPathEqualTo("/api/generate")).willReturn(aResponse().withBody("""{"response":"ok","done":true}"""))
+        )
+        val provider = OllamaLlmProvider(
+            model = "qwen3:14b",
+            baseUrl = baseUrl(),
+            settings = LlmTransportSettings(
+                thinking = com.mranalyser.infrastructure.llm.ThinkingMode.PER_STAGE,
+                reasoningTokens = 4_000
+            )
+        )
+
+        provider.complete(request.copy(maxOutputTokens = 3_000, reasoning = false))
+        provider.complete(request.copy(maxOutputTokens = 3_000, reasoning = true))
+
+        val (volume, validation) = server.allServeEvents.map { it.request.bodyAsString }.reversed()
+        assertTrue(volume.contains("\"think\":false"))
+        assertTrue(volume.contains("\"num_predict\":3000"))
+        assertTrue(validation.contains("\"think\":true"))
+        assertTrue(validation.contains("\"num_predict\":7000"))
+    }
+
+    @Test
+    fun `resposta vazia apos raciocinio deve apontar o orcamento`() = runBlocking {
+        server.stubFor(
+            post(urlPathEqualTo("/api/generate")).willReturn(
+                aResponse().withBody(
+                    """{"response":"","thinking":"pensando...","done":false}""" + "\n" +
+                        """{"response":"","thinking":" mais","done":true}"""
+                )
+            )
+        )
+
+        val response = OllamaLlmProvider(
+            model = "qwen3:14b",
+            baseUrl = baseUrl(),
+            settings = LlmTransportSettings(thinking = com.mranalyser.infrastructure.llm.ThinkingMode.ON)
+        ).complete(request)
+
+        assertFalse(response.successful)
+        assertTrue(response.failure!!.contains("MR_ANALYSER_LLM_REASONING_TOKENS"))
     }
 
     /**
@@ -285,6 +362,21 @@ class LlmProviderTest {
 
         assertFalse(response.successful)
         assertTrue(response.failure!!.contains("indisponível"))
+    }
+
+    @Test
+    fun `cancelamento deve interromper chamada em vez de virar falha recuperavel`() = runBlocking {
+        val cancellation = kotlinx.coroutines.CancellationException("interrompido")
+        val thrown = org.junit.jupiter.api.Assertions.assertThrows(
+            kotlinx.coroutines.CancellationException::class.java
+        ) {
+            runBlocking {
+                com.mranalyser.infrastructure.llm.safeCompletion("ollama:m") {
+                    throw cancellation
+                }
+            }
+        }
+        assertEquals(cancellation, thrown)
     }
 
     @Test

@@ -65,7 +65,8 @@ data class ChunkReviewInput(
     val relatedContext: List<RelatedFileContext>,
     val discussions: List<ExistingDiscussion>,
     val understanding: ChangeUnderstanding?,
-    val architecturalSignals: List<ArchitecturalSignal>
+    val architecturalSignals: List<ArchitecturalSignal>,
+    val knowledge: List<KnowledgeExcerpt> = emptyList()
 )
 
 /** Entrada da etapa de validação de findings (item 8). */
@@ -76,7 +77,8 @@ data class ValidationInput(
     val relatedContext: List<RelatedFileContext>,
     val discussions: List<ExistingDiscussion>,
     /** Recorte do diff em volta de cada finding, indexado pelo identificador do candidato. */
-    val evidenceExcerpts: Map<String, String>
+    val evidenceExcerpts: Map<String, String>,
+    val knowledge: List<KnowledgeExcerpt> = emptyList()
 )
 
 /** Entrada da etapa de review cross-file (item 27). */

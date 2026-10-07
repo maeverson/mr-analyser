@@ -44,7 +44,7 @@ class OllamaLlmProvider(
     private val apiKey: String? = null,
     // Inferência self-hosted em diffs grandes é significativamente mais lenta. Aqui o valor é o
     // limite de ociosidade entre tokens, não a duração total permitida.
-    private val settings: LlmTransportSettings = LlmTransportSettings(timeoutSeconds = 600)
+    private val settings: LlmTransportSettings = LlmTransportSettings()
 ) : LlmProvider {
     override val name: String = "ollama:$model"
 
@@ -57,6 +57,8 @@ class OllamaLlmProvider(
     }
 
     private suspend fun generate(request: LlmRequest): LlmResponse {
+        val think = settings.thinking.enabledFor(request.reasoning)
+        val numPredict = request.maxOutputTokens + if (think == true) settings.reasoningTokens else 0
         val statement = client.preparePost(buildGenerateEndpoint(baseUrl)) {
             header("Content-Type", "application/json")
             if (!apiKey.isNullOrBlank()) {
@@ -69,9 +71,10 @@ class OllamaLlmProvider(
                     prompt = request.user,
                     stream = true,
                     format = if (settings.jsonMode) "json" else null,
+                    think = think,
                     options = OllamaOptions(
                         temperature = request.temperature,
-                        numPredict = request.maxOutputTokens,
+                        numPredict = numPredict,
                         numCtx = settings.numCtx
                     )
                 )
@@ -83,7 +86,7 @@ class OllamaLlmProvider(
                 runCatching { llmJson.decodeFromString<OllamaChunk>(raw) }.getOrNull()?.error
             }?.let { return@execute LlmResponse.failed(it) }
 
-            collect(response.bodyAsChannel(), request.maxOutputTokens)
+            collect(response.bodyAsChannel(), numPredict)
         }
     }
 
@@ -93,6 +96,7 @@ class OllamaLlmProvider(
      */
     private suspend fun collect(channel: ByteReadChannel, maxOutputTokens: Int): LlmResponse {
         val text = StringBuilder()
+        var thought = false
         var last: OllamaChunk? = null
 
         while (true) {
@@ -106,6 +110,9 @@ class OllamaLlmProvider(
                 return LlmResponse.failed("$name retornou erro: $error")
             }
             text.append(chunk.response)
+            // O pensamento vem em campo separado e fica fora da resposta; só importa saber que
+            // houve, para explicar uma resposta vazia.
+            thought = thought || chunk.thinking.isNotEmpty()
             last = chunk
             if (chunk.done) {
                 break
@@ -113,7 +120,14 @@ class OllamaLlmProvider(
         }
 
         if (text.isBlank()) {
-            return LlmResponse.failed("Ollama retornou conteúdo vazio")
+            return LlmResponse.failed(
+                if (thought) {
+                    "o raciocínio do modelo consumiu todo o num_predict antes da resposta; " +
+                        "aumente MR_ANALYSER_LLM_REASONING_TOKENS"
+                } else {
+                    "Ollama retornou conteúdo vazio"
+                }
+            )
         }
 
         val usage = last?.let {
@@ -152,6 +166,7 @@ private data class OllamaRequest(
     val system: String? = null,
     val stream: Boolean,
     val format: String? = null,
+    val think: Boolean? = null,
     val options: OllamaOptions? = null
 )
 
@@ -165,6 +180,7 @@ private data class OllamaOptions(
 @Serializable
 private data class OllamaChunk(
     val response: String = "",
+    val thinking: String = "",
     val done: Boolean = false,
     val error: String? = null,
     @SerialName("prompt_eval_count") val promptEvalCount: Int = 0,

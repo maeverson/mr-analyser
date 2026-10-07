@@ -7,6 +7,7 @@ import com.mranalyser.application.llm.prompt.FindingValidationPrompt
 import com.mranalyser.application.llm.prompt.LocalReviewPrompt
 import com.mranalyser.application.llm.prompt.PromptSections
 import com.mranalyser.application.llm.prompt.UnderstandingPrompt
+import com.mranalyser.application.llm.skill.ReviewSkillCatalog
 import com.mranalyser.application.port.ContextBudget
 import com.mranalyser.application.port.LlmProvider
 import com.mranalyser.application.port.RepositoryContextProvider
@@ -17,6 +18,8 @@ import com.mranalyser.application.review.CrossFileReviewStage
 import com.mranalyser.application.review.FileRelationDetector
 import com.mranalyser.application.review.FinalAssessmentStage
 import com.mranalyser.application.review.FindingValidationStage
+import com.mranalyser.application.review.KnowledgeBaseRetriever
+import com.mranalyser.application.review.KnowledgeBudget
 import com.mranalyser.application.review.LocalReviewStage
 import com.mranalyser.application.review.RepositoryContextRetriever
 import com.mranalyser.application.review.SymbolExtractor
@@ -43,7 +46,13 @@ import com.mranalyser.infrastructure.llm.OllamaLlmProvider
 import com.mranalyser.infrastructure.llm.OpenAiLlmProvider
 import com.mranalyser.infrastructure.llm.ProgressLoggingLlmProvider
 import com.mranalyser.infrastructure.llm.ResilientLlmProvider
+import com.mranalyser.infrastructure.llm.ThinkingMode
+import com.mranalyser.application.port.KnowledgeBaseProvider
+import com.mranalyser.infrastructure.knowledge.KbTokenSource
+import com.mranalyser.infrastructure.knowledge.McpKnowledgeBaseProvider
 import com.mranalyser.infrastructure.repository.LocalRepositoryContextProvider
+import com.mranalyser.infrastructure.skill.ReviewSkillFileLoader
+import java.io.File
 
 /**
  * Montagem do pipeline a partir da configuração.
@@ -100,8 +109,9 @@ object AnalyzerFactory {
                 baseUrl = config.llm.url ?: "http://localhost:11434",
                 apiKey = key,
                 settings = transport.copy(
-                    timeoutSeconds = maxOf(config.llm.timeoutSeconds, OLLAMA_MINIMUM_TIMEOUT_SECONDS),
-                    numCtx = config.llm.numCtx ?: OLLAMA_DEFAULT_NUM_CTX
+                    numCtx = config.llm.numCtx ?: OLLAMA_DEFAULT_NUM_CTX,
+                    thinking = ThinkingMode.parse(config.llm.thinking),
+                    reasoningTokens = config.llm.reasoningTokens
                 )
             )
 
@@ -125,10 +135,12 @@ object AnalyzerFactory {
     fun createAnalyzer(
         config: AppConfig,
         llmProvider: LlmProvider,
-        repositoryContextProvider: RepositoryContextProvider? = LocalRepositoryContextProvider()
+        repositoryContextProvider: RepositoryContextProvider? = LocalRepositoryContextProvider(),
+        knowledgeBaseProvider: KnowledgeBaseProvider? = createKnowledgeBaseProvider(config)
     ): MergeRequestAnalyzer {
         val sections = PromptSections()
         val parser = ReviewResponseParser()
+        val skills = createSkillCatalog(config)
 
         return MergeRequestAnalyzer(
             rules = defaultRules(config),
@@ -158,20 +170,20 @@ object AnalyzerFactory {
             ),
             localReviewStage = LocalReviewStage(
                 llmProvider = llmProvider,
-                prompt = LocalReviewPrompt(sections),
+                prompt = LocalReviewPrompt(sections, skills),
                 parser = parser,
                 maxConcurrency = effectiveConcurrency(config),
                 maxOutputTokens = config.llm.maxOutputTokensReview
             ),
             validationStage = FindingValidationStage(
                 llmProvider = llmProvider,
-                prompt = FindingValidationPrompt(sections),
+                prompt = FindingValidationPrompt(sections, skills),
                 parser = parser,
                 maxOutputTokens = config.llm.maxOutputTokensReview
             ),
             crossFileStage = CrossFileReviewStage(
                 llmProvider = llmProvider,
-                prompt = CrossFileReviewPrompt(sections),
+                prompt = CrossFileReviewPrompt(sections, skills),
                 parser = parser,
                 maxOutputTokens = config.llm.maxOutputTokensReview
             ),
@@ -194,8 +206,34 @@ object AnalyzerFactory {
                 validationEnabled = config.review.validationEnabled,
                 crossFileEnabled = config.review.crossFileEnabled,
                 finalAssessmentEnabled = config.review.finalAssessmentEnabled
+            ),
+            knowledgeRetriever = KnowledgeBaseRetriever(
+                provider = knowledgeBaseProvider,
+                budget = KnowledgeBudget(
+                    maxDocuments = config.knowledgeBase.maxDocuments,
+                    maxChars = config.knowledgeBase.maxChars
+                )
             )
         )
+    }
+
+    fun createKnowledgeBaseProvider(config: AppConfig): KnowledgeBaseProvider? {
+        val kb = config.knowledgeBase
+        if (!kb.enabled || kb.maxChars == 0) {
+            return null
+        }
+        return McpKnowledgeBaseProvider(kb.url, KbTokenSource(kb.url), kb.timeoutSeconds)
+    }
+
+    /**
+     * Caminho explícito ausente é aviso (o loader registra); o default implícito só é usado se
+     * existir, para que rodar sem skills continue silencioso.
+     */
+    fun createSkillCatalog(config: AppConfig): ReviewSkillCatalog {
+        val path = config.review.skillsPath?.let(::File)
+            ?: File(DEFAULT_SKILLS_PATH).takeIf { it.exists() }
+            ?: return ReviewSkillCatalog.EMPTY
+        return ReviewSkillCatalog(ReviewSkillFileLoader().load(path), config.review.maxSkillChars)
     }
 
     /**
@@ -214,12 +252,12 @@ object AnalyzerFactory {
         MissingTestCoverageRule()
     )
 
-    private const val OLLAMA_MINIMUM_TIMEOUT_SECONDS = 600L
-
     /**
      * Cabe um 14B Q4 inteiro na GPU (49/49 camadas numa RTX 3060 de 12 GB, com
      * `OLLAMA_FLASH_ATTENTION=1` e `OLLAMA_KV_CACHE_TYPE=q8_0`) e ainda acomoda os maiores
      * prompts de chunk observados, ~19,3 mil tokens, com folga para a saída.
      */
     private const val OLLAMA_DEFAULT_NUM_CTX = 24_576
+
+    private const val DEFAULT_SKILLS_PATH = ".mranalyser/skills.md"
 }

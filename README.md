@@ -138,6 +138,78 @@ MR_ANALYSER_LLM_MAX_TOKENS=3000
 `num_ctx` precisa acomodar prompt **e** saída: se `prompt + MR_ANALYSER_LLM_MAX_TOKENS` passar da
 janela, o Ollama trunca o prompt em silêncio. O provider emite um `WARN` quando isso acontece.
 
+O Ollama respeita `MR_ANALYSER_LLM_TIMEOUT_SECONDS` (padrão: 180 segundos) como limite
+sem receber dados, inclusive antes do primeiro token. O streaming permite gerações mais longas
+quando há dados chegando. Timeouts do Ollama não são repetidos automaticamente; as outras
+falhas transitórias continuam seguindo `MR_ANALYSER_LLM_MAX_RETRIES`. Durante a chamada,
+a CLI informa a espera a cada 30 segundos.
+
+Modelos com modo de raciocínio (qwen3, gpt-oss) devem usar raciocínio por etapa: desligado nas
+etapas de volume (um chunk por chamada) e ligado só na validação, onde refutar candidato exige
+pensar. O raciocínio conta no `num_predict`, por isso a validação ganha um orçamento extra.
+
+```properties
+MR_ANALYSER_LLM_THINKING=stage            # none (padrão, não envia o campo) | off | stage | on
+MR_ANALYSER_LLM_REASONING_TOKENS=4000
+```
+
+Use `none` com modelos sem suporte a raciocínio, como o `qwen2.5-coder`.
+
+### Skills de revisão
+
+Modelos self-hosted menores não conhecem as convenções do stack: reportam como problema o que o
+padrão já resolve (evento publicado pelo outbox, timeout configurado no bean do client) e deixam
+passar o desvio do padrão (`@Transactional` em método privado, conversão manual de centavos).
+Skills são esse conhecimento, mantido em Markdown fora do código e injetado só nos prompts que
+olham código — review local, validação e cross-file.
+
+[skills/review-skills.md](skills/review-skills.md) traz as skills do stack JVM/Spring/GCP e
+documenta o formato. Cada skill declara onde se aplica (`groups`, `paths`, `triggers`, `stages`),
+e cada prompt recebe apenas as aplicáveis aos seus arquivos; a skill `falsos-positivos-conhecidos`
+roda só na validação, onde derruba candidatos.
+
+```properties
+MR_ANALYSER_SKILLS_PATH=/caminho/absoluto/mr-analyser/skills/review-skills.md
+MR_ANALYSER_SKILLS_MAX_CHARS=6000
+```
+
+O caminho pode ser um diretório de `.md`. Sem configuração, vale `.mranalyser/skills.md` do
+diretório atual, se existir. O orçamento sai do mesmo `num_ctx` do diff: skills que não cabem
+são omitidas inteiras (com `WARN`), por ordem de `priority`. Se aparecer o `WARN` de truncamento
+do Ollama depois de habilitar skills, reduza `MR_ANALYSER_MAX_DIFF_LINES`.
+
+Como o default é lido do checkout do MR, um MR pode alterar `.mranalyser/skills.md`. Os prompts
+tratam skills como diretriz subordinada às regras do sistema, mas para revisão de terceiros
+prefira um `MR_ANALYSER_SKILLS_PATH` absoluto, fora do repositório revisado.
+
+### Base de conhecimento
+
+A análise consulta a base de conhecimento de engenharia (ADRs, contratos, processos) e injeta
+nos prompts a documentação **do repositório do MR**: é o que permite ao modelo confrontar o código
+com o contrato do endpoint ou com a decisão já tomada, em vez de completar com suposições.
+
+```bash
+./gradlew run --args="kb login"          # uma vez: SSO no navegador; token em ~/.config/mr-analyser/
+./gradlew run --args="kb search 'detalhe da empresa' --squad billing"   # diagnóstico
+./gradlew run --args="kb logout"
+```
+
+- Uma busca por MR (`search_documents`), com o nome do repositório e o squad tirados do caminho
+  do projeto no GitLab. Só entram documentos do próprio repositório ou que o citem.
+- Os documentos vão para as etapas de **entendimento** (divergência entre implementação e
+  contrato vira `intentDiscrepancy`) e **validação** (decisão documentada derruba candidato).
+- Documento é contexto, não evidência. Divergência de documento `PROPOSTO` ou sem status é no
+  máximo pergunta; só documento `ACEITO` sustenta finding, e sempre com a linha do código.
+- Sem login, base fora do ar ou fora da VPN: a etapa aparece como não executada em "Qualidade da
+  análise" e o restante segue. Os documentos usados são listados na mesma seção.
+
+```properties
+MR_ANALYSER_KB_ENABLED=true
+MR_ANALYSER_KB_MAX_DOCS=4
+MR_ANALYSER_KB_MAX_CHARS=3500       # sai do mesmo num_ctx do diff no Ollama
+MR_ANALYSER_KB_TIMEOUT_SECONDS=20
+```
+
 ### `.mranalyser.yml` (política de análise)
 
 Copie de `.mranalyser.yml.example`, que documenta todos os campos e defaults.
@@ -149,7 +221,9 @@ Chaves equivalentes por variável de ambiente: `MR_ANALYSER_LLM_TIMEOUT_SECONDS`
 `MR_ANALYSER_STAGE_VALIDATION`, `MR_ANALYSER_STAGE_CROSS_FILE`, `MR_ANALYSER_STAGE_ASSESSMENT`,
 `MR_ANALYSER_CONTEXT_ENABLED`, `MR_ANALYSER_CONTEXT_REQUIRE_REPO_MATCH`,
 `MR_ANALYSER_CONTEXT_MAX_FILES_PER_CHANGE`, `MR_ANALYSER_CONTEXT_MAX_TOTAL_FILES`,
-`MR_ANALYSER_CONTEXT_MAX_CHARS`, `MR_ANALYSER_MAX_DIFF_LINES`, `MR_ANALYSER_MAX_FILE_LINES`.
+`MR_ANALYSER_CONTEXT_MAX_CHARS`, `MR_ANALYSER_MAX_DIFF_LINES`, `MR_ANALYSER_MAX_FILE_LINES`,
+`MR_ANALYSER_SKILLS_PATH`, `MR_ANALYSER_SKILLS_MAX_CHARS`, `MR_ANALYSER_KB_ENABLED`, `MR_ANALYSER_KB_URL`,
+`MR_ANALYSER_KB_MAX_DOCS`, `MR_ANALYSER_KB_MAX_CHARS`, `MR_ANALYSER_KB_TIMEOUT_SECONDS`.
 
 `mr-analyser config show` imprime a configuração efetiva com segredos mascarados.
 
@@ -157,7 +231,7 @@ Chaves equivalentes por variável de ambiente: `MR_ANALYSER_LLM_TIMEOUT_SECONDS`
 
 ```bash
 # por URL
-./gradlew run --args="analyse --url https://gitlab.com/grupo/projeto/-/merge_requests/123"
+./gradlew run --args="analyse --url https://gitlab.com/ctbz/billing/invoices/invoice-core/-/merge_requests/28"
 
 # por projeto e IID
 ./gradlew run --args="analyse --project grupo/projeto --mr 123"
@@ -170,7 +244,8 @@ Opções: `--project`, `--mr`, `--url`, `--provider`, `--model`,
 `--output console|markdown|json|gitlab-comments`, `--verbose`, `--show-low-confidence`,
 `--no-context`, `--fast`.
 
-O relatório é impresso e salvo em `reports/`.
+O relatório é impresso no formato de `--output` e salvo em `reports/` como Markdown (`.md`),
+qualquer que seja o formato do terminal. A exceção é `--output json`, salvo como `.json`.
 
 ### Contexto do repositório local
 

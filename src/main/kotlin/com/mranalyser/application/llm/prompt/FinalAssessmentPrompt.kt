@@ -101,11 +101,9 @@ Brazilian Portuguese, in first person, as a reviewer summarising their position.
 2. the point (if any) that deserves adjustment before merge, and why;
 3. what you would leave as non-blocking questions or suggestions.
 
-Example of the expected tone:
-"A implementação está coerente com o objetivo do MR e não identifiquei problemas estruturais no
-fluxo principal. Há, entretanto, um ponto que merece ajuste antes do merge relacionado à
-consistência entre persistência e chamada ao provider externo. Também deixaria dois
-questionamentos não bloqueantes sobre retry e cobertura de testes."
+Name the real components and findings of this MR (e.g. the adapter, endpoint or rule involved);
+an opinion that would fit any other MR is useless. Count the questions and suggestions from the
+list below — do not invent a number.
 
 If the list of validated findings is empty, say so plainly and state that you would approve.
 Do not manufacture concerns to fill the opinion.

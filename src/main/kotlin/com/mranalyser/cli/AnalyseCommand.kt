@@ -7,6 +7,7 @@ import com.mranalyser.application.port.MergeRequestProvider
 import com.mranalyser.application.usecase.AnalyseMergeRequestUseCase
 import com.mranalyser.domain.model.FileChange
 import com.mranalyser.domain.model.MergeRequest
+import com.mranalyser.application.llm.skill.PathGlob
 import com.mranalyser.infrastructure.config.AnalyzerFactory
 import com.mranalyser.infrastructure.config.ConfigLoader
 import com.mranalyser.infrastructure.gitlab.GitLabApiException
@@ -120,14 +121,19 @@ class AnalyseCommand : CliktCommand(name = "analyse") {
             }
 
             val renderedReport = renderer.render(mrData, report)
+
+            // O terminal mostra o formato pedido; o arquivo é o entregável e sai em Markdown,
+            // que abre formatado no editor e cola direto em wiki, issue ou MR. Só JSON, que é
+            // para automação, é gravado como pedido.
+            val isJson = output?.lowercase() == "json"
             val reportPath = ReportFileWriter().writeReport(
                 mrIdentifier = "mr-$resolvedMr",
-                content = renderedReport,
-                extension = when (output?.lowercase()) {
-                    "json" -> ".json"
-                    "markdown", "md" -> ".md"
-                    else -> ".txt"
-                }
+                content = when {
+                    isJson -> renderedReport
+                    renderer is MarkdownReportRenderer -> renderedReport
+                    else -> MarkdownReportRenderer().render(mrData, report)
+                },
+                extension = if (isJson) ".json" else ".md"
             )
 
             echo(renderedReport)
@@ -165,45 +171,10 @@ class AnalyseCommand : CliktCommand(name = "analyse") {
         if (patterns.isEmpty()) {
             return changes
         }
-        val compiled = patterns.map(::globToRegex)
+        val compiled = patterns.map(PathGlob::toRegex)
         return changes.filterNot { change ->
             compiled.any { it.matches(change.newPath) || it.matches(change.oldPath) }
         }
-    }
-
-    /**
-     * Conversão de glob para regex.
-     *
-     * A versão anterior usava `Regex.escape(glob)` e depois tentava substituir a estrela no
-     * resultado. `Regex.escape` devolve `\Q...\E`, então as substituições nunca casavam e
-     * **nenhum wildcard funcionava**: um `ignoredPaths` com `*.lock` ou `generated` seguido de
-     * estrela dupla não filtrava nada. Aqui o escape é feito caractere a caractere, preservando
-     * estrela simples, estrela dupla e interrogação.
-     */
-    private fun globToRegex(glob: String): Regex {
-        val pattern = StringBuilder("^")
-        var index = 0
-
-        while (index < glob.length) {
-            when (val char = glob[index]) {
-                '*' -> if (index + 1 < glob.length && glob[index + 1] == '*') {
-                    pattern.append(".*")
-                    index++
-                } else {
-                    pattern.append("[^/]*")
-                }
-
-                '?' -> pattern.append("[^/]")
-                '.', '(', ')', '+', '|', '^', '$', '@', '%', '{', '}', '[', ']', '\\' ->
-                    pattern.append('\\').append(char)
-
-                else -> pattern.append(char)
-            }
-            index++
-        }
-
-        // "generated/**" deve casar também com o próprio diretório e com "generated/a/b.kt".
-        return Regex(pattern.append('$').toString().replace("/.*$", "(/.*)?$"))
     }
 
     private fun friendlyGitLabError(exception: GitLabApiException): String {

@@ -12,6 +12,7 @@ import com.mranalyser.application.review.ExistingDiscussion
 import com.mranalyser.application.review.FileRelationDetector
 import com.mranalyser.application.review.FinalAssessmentStage
 import com.mranalyser.application.review.FindingValidationStage
+import com.mranalyser.application.review.KnowledgeBaseRetriever
 import com.mranalyser.application.review.LocalReviewStage
 import com.mranalyser.application.review.MergeRequestOverview
 import com.mranalyser.application.review.RepositoryContextRetriever
@@ -70,7 +71,9 @@ class MergeRequestAnalyzer(
     private val blockingPolicy: BlockingPolicy,
     private val noisePolicy: NoisePolicy,
     private val recommendationCalculator: MergeRecommendationCalculator,
-    private val settings: AnalyzerSettings = AnalyzerSettings()
+    private val settings: AnalyzerSettings = AnalyzerSettings(),
+    private val knowledgeRetriever: KnowledgeBaseRetriever = KnowledgeBaseRetriever(provider = null),
+    private val groundingCheck: EvidenceGroundingCheck = EvidenceGroundingCheck()
 ) {
     private val logger = LoggerFactory.getLogger(MergeRequestAnalyzer::class.java)
 
@@ -100,10 +103,11 @@ class MergeRequestAnalyzer(
         val queries = files.associate { it.path to symbolExtractor.extract(it.path, parsedDiffs.getValue(it.path)) }
         val relatedContext = contextRetriever.retrieve(mergeRequest.projectPath, queries.values.toList(), diagnostics)
         val relations = relationDetector.detect(files, queries)
+        val knowledge = knowledgeRetriever.retrieve(mergeRequest.projectPath.orEmpty(), overview, diagnostics)
 
         // --- Etapa 1: entendimento --------------------------------------------------------
         val understanding = if (settings.understandingEnabled) {
-            understandingStage.run(overview, signals, parsedDiffs, diagnostics)
+            understandingStage.run(overview, signals, parsedDiffs, diagnostics, knowledge)
         } else {
             diagnostics.skipStage("entendimento da alteração", "desabilitado por configuração")
             null
@@ -125,14 +129,28 @@ class MergeRequestAnalyzer(
                     },
                     discussions = discussions,
                     understanding = understanding,
-                    architecturalSignals = signals
+                    architecturalSignals = signals,
+                    // Contrato e ADR só têm o que conferir em código de produção; em teste,
+                    // build e docs seriam tokens gastos no num_ctx sem retorno.
+                    knowledge = if (chunk.group.isProductionCode) knowledge else emptyList()
                 )
             },
             diagnostics
         )
 
-        val candidates = staticFindings + localResults.flatMap { it.findings }
-        diagnostics.candidateFindings = candidates.size
+        val allCandidates = staticFindings + localResults.flatMap { it.findings }
+        diagnostics.candidateFindings = allCandidates.size
+
+        // Antes da validação: finding com evidência inventada não deve gastar tokens nem
+        // contaminar o lote que o modelo valida junto.
+        val groundingCorpus = buildString {
+            analysable.forEach { appendLine(it.diff) }
+            relatedContext.forEach { appendLine(it.content) }
+        }
+        val knownPaths = analysable.flatMap { listOf(it.newPath, it.oldPath) } + relatedContext.map { it.relatedPath }
+        val fileCorpora = analysable.associate { it.path to it.diff } +
+            relatedContext.groupBy { it.relatedPath }.mapValues { (_, contexts) -> contexts.joinToString("\n") { it.content } }
+        val candidates = ground(allCandidates, groundingCorpus, knownPaths, fileCorpora, diagnostics)
 
         // --- Etapa 3: deduplicação --------------------------------------------------------
         val deduplication = deduplicator.analyse(candidates, mergeRequest.discussions)
@@ -148,7 +166,8 @@ class MergeRequestAnalyzer(
                 relatedContext = relatedContext,
                 discussions = discussions,
                 parsedDiffs = parsedDiffs,
-                diagnostics = diagnostics
+                diagnostics = diagnostics,
+                knowledge = knowledge
             ).also { diagnostics.discardedByValidation = it.discarded }
         } else {
             diagnostics.skipStage("validação de findings", "desabilitada por configuração")
@@ -173,8 +192,14 @@ class MergeRequestAnalyzer(
         }
 
         // --- Etapa 6: políticas determinísticas ------------------------------------------
-        val afterCrossFile = applyInvalidations(validated.findings, crossFile.invalidatedTitles, diagnostics) +
-            crossFile.newFindings
+        val combined = applyInvalidations(validated.findings, crossFile.invalidatedTitles, diagnostics) +
+            ground(crossFile.newFindings, groundingCorpus, knownPaths, fileCorpora, diagnostics)
+
+        // A validação reescreve título e evidência: dois candidatos distintos na entrada podem
+        // convergir para o mesmo ponto na saída, e o cross-file pode repetir um local.
+        val regrouped = deduplicator.analyse(combined, emptyList())
+        diagnostics.discardedByDeduplication += regrouped.removedAsDuplicate
+        val afterCrossFile = regrouped.findings
 
         // A ordem importa: evidência limita a severidade, a política de bloqueio decide, e o
         // gate de validação revoga por último — um achado não confrontado com o código não
@@ -186,8 +211,11 @@ class MergeRequestAnalyzer(
 
         val (visible, filtered) = applyVisibilityFilters(refined, diagnostics)
 
-        val questions = (localResults.flatMap { it.questions } + crossFile.questions).distinct()
-        val positives = (localResults.flatMap { it.positivePoints } + crossFile.positivePoints).distinct()
+        val questions = deduplicator.distinctStatements(localResults.flatMap { it.questions } + crossFile.questions)
+        val positives = deduplicator.distinctStatements(
+            localResults.flatMap { it.positivePoints } + crossFile.positivePoints,
+            max = MAX_POSITIVE_POINTS
+        )
 
         // --- Etapa 7: parecer final -------------------------------------------------------
         val assessment = if (settings.finalAssessmentEnabled) {
@@ -214,8 +242,13 @@ class MergeRequestAnalyzer(
         return ReviewReport(
             summary = buildSummary(crossFile.summary, localResults.map { it.summary }, understanding, visible.size),
             findings = visible,
-            questions = (questions + assessment?.questions.orEmpty()).distinct(),
-            positivePoints = (positives + assessment?.positivePoints.orEmpty()).distinct(),
+            // Pergunta que só reformula um finding apresentado duplica o ponto no relatório.
+            questions = deduplicator.distinctStatements(questions + assessment?.questions.orEmpty())
+                .filterNot { question -> deduplicator.restatesAny(question, visible) },
+            positivePoints = deduplicator.distinctStatements(
+                positives + assessment?.positivePoints.orEmpty(),
+                max = MAX_POSITIVE_POINTS
+            ),
             recommendation = recommendation,
             understanding = understanding,
             architecturalSignals = signals,
@@ -226,16 +259,31 @@ class MergeRequestAnalyzer(
                 chunksAnalysed = diagnostics.chunksAnalysed,
                 chunksFailed = diagnostics.chunksFailed,
                 relatedContextsLoaded = diagnostics.relatedContextsLoaded,
+                knowledgeSources = diagnostics.knowledgeSources,
                 candidateFindings = diagnostics.candidateFindings,
                 discardedByDeduplication = diagnostics.discardedByDeduplication,
                 discardedByValidation = diagnostics.discardedByValidation,
                 discardedByConfidence = diagnostics.discardedByConfidence,
                 discardedAsNoise = diagnostics.discardedAsNoise,
+                discardedAsUngrounded = diagnostics.discardedAsUngrounded,
                 presentedFindings = visible.size,
                 skippedStages = diagnostics.skippedStages,
                 warnings = diagnostics.warnings
             )
         )
+    }
+
+    private fun ground(
+        findings: List<ReviewFinding>,
+        corpus: String,
+        knownPaths: List<String>,
+        fileCorpora: Map<String, String>,
+        diagnostics: AnalysisDiagnostics
+    ): List<ReviewFinding> {
+        val result = groundingCheck.apply(findings, corpus, knownPaths, fileCorpora)
+        diagnostics.discardedAsUngrounded += result.discarded.size
+        result.discarded.forEach { logger.info("Finding descartado por citar código inexistente: {}", it.title) }
+        return result.findings
     }
 
     private fun runStaticRules(
@@ -338,4 +386,9 @@ class MergeRequestAnalyzer(
         localSummaries.firstOrNull { it.isNotBlank() }.orEmpty()
     ).firstOrNull { it.isNotBlank() }
         ?: "Análise concluída com $presentedFindings ponto(s) relevante(s) para revisão."
+
+    private companion object {
+        /** Um relatório com 23 pontos positivos, a maioria repetida, esconde os que importam. */
+        const val MAX_POSITIVE_POINTS = 6
+    }
 }

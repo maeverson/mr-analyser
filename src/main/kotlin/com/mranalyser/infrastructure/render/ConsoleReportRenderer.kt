@@ -267,7 +267,14 @@ class ConsoleReportRenderer(
         sb.appendLine("   Descartados na validação: ${quality.discardedByValidation}")
         sb.appendLine("   Descartados por confiança: ${quality.discardedByConfidence}")
         sb.appendLine("   Descartados como ruído: ${quality.discardedAsNoise}")
+        sb.appendLine("   Descartados por citar código inexistente: ${quality.discardedAsUngrounded}")
         sb.appendLine("   Findings apresentados: ${quality.presentedFindings}")
+
+        if (quality.knowledgeSources.isNotEmpty()) {
+            sb.appendLine()
+            sb.appendLine("   Documentos da base de conhecimento consultados:")
+            quality.knowledgeSources.forEach { sb.appendLine("      - $it") }
+        }
 
         if (quality.skippedStages.isNotEmpty()) {
             sb.appendLine()

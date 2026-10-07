@@ -29,13 +29,15 @@ class ChangeUnderstandingStage(
         overview: MergeRequestOverview,
         signals: List<ArchitecturalSignal>,
         parsedDiffs: Map<String, ParsedDiff>,
-        diagnostics: AnalysisDiagnostics
+        diagnostics: AnalysisDiagnostics,
+        knowledge: List<KnowledgeExcerpt> = emptyList()
     ): ChangeUnderstanding? {
         val request = prompt.build(
             overview = overview,
             signals = signals,
             diffDigest = buildDigest(overview, parsedDiffs),
-            maxOutputTokens = maxOutputTokens
+            maxOutputTokens = maxOutputTokens,
+            knowledge = knowledge
         )
 
         val response = llmProvider.complete(request)
