@@ -7,7 +7,11 @@ import com.mranalyser.domain.model.ReviewReport
 
 /**
  * Mesma estrutura do relatório de console, em Markdown, para colar em wiki, issue ou descrição
- * de MR. As seções seguem a ordem do item 36 e categorias vazias são omitidas.
+ * de MR. Categorias vazias são omitidas.
+ *
+ * O relatório é um double-check para um revisor experiente, não um parecer de aprovação: abre
+ * com onde ter cuidado em 30 segundos, detalha cada ponto como "o que conferir / por quê / como
+ * conferir" e deixa a recomendação agregada como uma linha de metadado no fim.
  */
 class MarkdownReportRenderer : ReportRenderer {
     override fun render(mergeRequest: MergeRequest, report: ReviewReport): String {
@@ -23,17 +27,17 @@ class MarkdownReportRenderer : ReportRenderer {
         sb.appendLine("| Branches | `${mergeRequest.sourceBranch}` → `${mergeRequest.targetBranch}` |")
         sb.appendLine("| Arquivos alterados | ${mergeRequest.changes.size} |")
         sb.appendLine("| Linhas | +$added / -$removed |")
-        sb.appendLine("| Parecer | **${ReviewNarrative.recommendationLabel(report.recommendation)}** |")
         sb.appendLine()
 
+        renderSummary(sb, report)
         renderUnderstanding(sb, report)
         renderSignals(sb, report)
-        renderReviewPoints(sb, report)
-        renderPreExisting(sb, report)
+        renderCareful(sb, report)
+        renderMinor(sb, report)
+        renderPositives(sb, report)
         renderQuestions(sb, report)
-        renderOpinion(sb, report)
-        renderVerdict(sb, report)
-        renderQuality(sb, report.quality)
+        renderPreExisting(sb, report)
+        renderQuality(sb, report)
 
         return sb.toString().trimEnd()
     }
@@ -79,82 +83,88 @@ class MarkdownReportRenderer : ReportRenderer {
         sb.appendLine()
     }
 
-    private fun renderReviewPoints(sb: StringBuilder, report: ReviewReport) {
-        sb.appendLine("## 🎯 Pontos que eu revisaria no MR")
+    private fun renderSummary(sb: StringBuilder, report: ReviewReport) {
+        sb.appendLine("## ⏱️ Em 30 segundos")
         sb.appendLine()
-
-        var counter = 0
-        counter = renderBucket(sb, "### 🔴 Solicitaria ajuste", report.blockingFindings, counter)
-        counter = renderBucket(sb, "### 🟡 Questionaria", report.questionFindings, counter)
-        counter = renderBucket(sb, "### 🔵 Sugestões", report.suggestionFindings, counter)
-
-        if (report.positivePoints.isNotEmpty()) {
-            sb.appendLine("### ✅ Pontos tecnicamente adequados")
-            sb.appendLine()
-            report.positivePoints.forEach { sb.appendLine("- $it") }
+        report.opinion?.opinion?.takeIf { it.isNotBlank() }?.let {
+            sb.appendLine(it)
             sb.appendLine()
         }
+        val areas = ReviewNarrative.attentionAreas(report)
+        if (areas.isEmpty()) {
+            sb.appendLine("Nenhuma área exigiu atenção especial nesta análise.")
+        } else {
+            sb.appendLine("**Onde ter cuidado:**")
+            sb.appendLine()
+            areas.forEach { sb.appendLine("- $it") }
+        }
+        sb.appendLine()
+    }
 
-        if (counter == 0 && report.positivePoints.isEmpty()) {
-            sb.appendLine("Não identifiquei pontos que exigissem comentário neste MR.")
+    private fun renderCareful(sb: StringBuilder, report: ReviewReport) {
+        val careful = report.carefulFindings
+        if (careful.isEmpty()) {
+            return
+        }
+        sb.appendLine("## 🔍 Onde ter cuidado")
+        sb.appendLine()
+
+        careful.forEachIndexed { index, finding ->
+            sb.appendLine("#### ${index + 1}. `${finding.location}` — ${finding.title}")
+            sb.appendLine()
+            sb.appendLine("**O que conferir:** ${ReviewNarrative.whatToCheck(finding)}")
+            ReviewNarrative.why(finding)?.let {
+                sb.appendLine()
+                sb.appendLine("**Por quê:** $it")
+            }
+            finding.evidence?.let {
+                sb.appendLine()
+                sb.appendLine("**Como conferir:** $it")
+            }
+            finding.failureScenario?.let { scenario ->
+                sb.appendLine()
+                sb.appendLine("**Cenário a considerar:**")
+                sb.appendLine()
+                ReviewNarrative.failureScenarioLines(scenario).forEach { sb.appendLine("$it  ") }
+            }
+            finding.suggestedComment?.let {
+                sb.appendLine()
+                sb.appendLine("**Se for comentar no MR:**")
+                sb.appendLine()
+                it.lines().forEach { line -> sb.appendLine("> $line") }
+            }
+            sb.appendLine()
+            sb.appendLine(
+                "_${finding.severity.name} · confiança ${ReviewNarrative.formatConfidence(finding.confidence)} · " +
+                    "${finding.category.label}_"
+            )
             sb.appendLine()
         }
     }
 
-    private fun renderBucket(
-        sb: StringBuilder,
-        heading: String,
-        findings: List<ReviewFinding>,
-        startingCounter: Int
-    ): Int {
-        if (findings.isEmpty()) {
-            return startingCounter
+    private fun renderMinor(sb: StringBuilder, report: ReviewReport) {
+        val minor = report.minorFindings
+        if (minor.isEmpty()) {
+            return
         }
-
-        sb.appendLine(heading)
+        sb.appendLine("## 📝 Itens menores")
         sb.appendLine()
+        minor.forEach { sb.appendLine("- `${it.location}` — ${it.title}") }
+        sb.appendLine()
+    }
 
-        var counter = startingCounter
-        findings.forEach { finding ->
-            counter++
-            sb.appendLine("#### $counter. ${ReviewNarrative.findingHeader(finding)} ${finding.title}")
-            sb.appendLine()
-            sb.appendLine(finding.description)
-
-            finding.evidence?.let {
+    private fun renderPositives(sb: StringBuilder, report: ReviewReport) {
+        if (report.positivePoints.isEmpty()) {
+            if (report.findings.isEmpty()) {
+                sb.appendLine("Não identifiquei pontos que exigissem atenção neste MR.")
                 sb.appendLine()
-                sb.appendLine("**Evidência:** $it")
             }
-            finding.failureScenario?.let { scenario ->
-                sb.appendLine()
-                sb.appendLine("**Cenário de falha:**")
-                sb.appendLine()
-                ReviewNarrative.failureScenarioLines(scenario).forEach { sb.appendLine("$it  ") }
-            }
-            finding.impact?.let {
-                sb.appendLine()
-                sb.appendLine("**Impacto:** $it")
-            }
-            finding.recommendation?.let {
-                sb.appendLine()
-                sb.appendLine("**O que avaliar:** $it")
-            }
-            finding.suggestedComment?.let {
-                sb.appendLine()
-                sb.appendLine("**Comentário sugerido:**")
-                sb.appendLine()
-                it.lines().forEach { line -> sb.appendLine("> $line") }
-            }
-
-            sb.appendLine()
-            sb.appendLine(
-                "_confiança ${ReviewNarrative.formatConfidence(finding.confidence)} · " +
-                    "categoria ${finding.category.label} · " +
-                    "${if (finding.blocking) "bloqueia o merge" else "não bloqueia"}_"
-            )
-            sb.appendLine()
+            return
         }
-        return counter
+        sb.appendLine("## ✅ Já coberto pelo MR")
+        sb.appendLine()
+        report.positivePoints.forEach { sb.appendLine("- $it") }
+        sb.appendLine()
     }
 
     private fun renderPreExisting(sb: StringBuilder, report: ReviewReport) {
@@ -162,7 +172,7 @@ class MarkdownReportRenderer : ReportRenderer {
         if (preExisting.isEmpty()) {
             return
         }
-        sb.appendLine("## 🧹 Dívida técnica identificada — não introduzida por este MR")
+        sb.appendLine("## 🧹 Dívida pré-existente — não introduzida por este MR")
         sb.appendLine()
         preExisting.forEach { finding ->
             sb.appendLine("- **${ReviewNarrative.findingHeader(finding)} ${finding.title}** — ${finding.description}")
@@ -180,37 +190,15 @@ class MarkdownReportRenderer : ReportRenderer {
         sb.appendLine()
     }
 
-    private fun renderOpinion(sb: StringBuilder, report: ReviewReport) {
-        val opinion = report.opinion ?: return
-        sb.appendLine("## 🧭 Parecer técnico")
-        sb.appendLine()
-        sb.appendLine(opinion.opinion)
-        sb.appendLine()
-    }
-
-    private fun renderVerdict(sb: StringBuilder, report: ReviewReport) {
-        sb.appendLine("## 🚦 Parecer final")
-        sb.appendLine()
-        sb.appendLine("**${ReviewNarrative.recommendationLabel(report.recommendation)}** — " +
-            ReviewNarrative.recommendationExplanation(report.recommendation))
-        sb.appendLine()
-        sb.appendLine("- Bloqueadores: ${report.blockingFindings.size}")
-        sb.appendLine("- Questionamentos: ${report.questionFindings.size}")
-        sb.appendLine("- Sugestões: ${report.suggestionFindings.size}")
-        ReviewNarrative.mainRisk(report)?.let {
-            sb.appendLine()
-            sb.appendLine("**Principal risco:** $it")
-        }
-        sb.appendLine()
-        sb.appendLine("**Confiança da análise:** ${ReviewNarrative.confidenceLabel(report.opinion?.analysisConfidence)}")
-        sb.appendLine()
-    }
-
-    private fun renderQuality(sb: StringBuilder, quality: AnalysisQuality?) {
-        if (quality == null) {
-            return
-        }
+    private fun renderQuality(sb: StringBuilder, report: ReviewReport) {
+        val quality = report.quality ?: return
         sb.appendLine("## 📊 Qualidade da análise")
+        sb.appendLine()
+        // Metadado, não veredito: o relatório não aprova nem bloqueia.
+        sb.appendLine(
+            "_Sinal agregado: ${ReviewNarrative.recommendationLabel(report.recommendation)} · " +
+                "confiança da análise: ${ReviewNarrative.confidenceLabel(report.opinion?.analysisConfidence)}_"
+        )
         sb.appendLine()
         sb.appendLine("| Métrica | Valor |")
         sb.appendLine("|---|---|")

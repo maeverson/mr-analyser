@@ -111,7 +111,9 @@ enum class AnalysisConfidence {
 data class TechnicalOpinion(
     val opinion: String,
     val mainRisk: String? = null,
-    val analysisConfidence: AnalysisConfidence = AnalysisConfidence.MEDIUM
+    val analysisConfidence: AnalysisConfidence = AnalysisConfidence.MEDIUM,
+    /** Resumo de 30 segundos: 2 a 4 áreas do MR onde o revisor deve ter cuidado. */
+    val attentionAreas: List<String> = emptyList()
 )
 
 /** Quality gate do próprio analisador (item 33). */
@@ -159,6 +161,14 @@ data class ReviewReport(
     /** 🔵 Sugestões. */
     val suggestionFindings: List<ReviewFinding>
         get() = findings.filter { it.bucket() == ReviewBucket.SUGGESTION }
+
+    /** "Onde ter cuidado": itens do MR que merecem a atenção do revisor. */
+    val carefulFindings: List<ReviewFinding>
+        get() = findings.filter { it.scope != FindingScope.PRE_EXISTING && it.attention == AttentionLevel.CAREFUL }
+
+    /** "Itens menores": uma linha cada. */
+    val minorFindings: List<ReviewFinding>
+        get() = findings.filter { it.scope != FindingScope.PRE_EXISTING && it.attention == AttentionLevel.MINOR }
 
     /** Dívida técnica não introduzida por este MR (item 19). */
     val preExistingFindings: List<ReviewFinding>

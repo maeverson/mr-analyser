@@ -146,6 +146,7 @@ When you KEEP or DOWNGRADE, you may and should improve the finding:
   of the conclusion;
 - rewrite "failureScenario" as numbered steps ending in the resulting bad state;
 - rewrite "suggestedComment" in the reviewer style described in the system prompt;
+- rewrite "recommendation" as what the reviewer should verify, imperative ("Confira se ...");
 - correct "severity" and "confidence" to what the evidence actually supports (usually downwards);
 - set "blocking" true only with evidence AND a described failure scenario.
 
@@ -168,7 +169,7 @@ Every candidate must appear exactly once in "verdicts", using the same id (F1, F
       "evidence": "fato verificável reescrito, ou null",
       "failureScenario": "1. ...\\n2. ...\\n3. estado resultante, ou null",
       "impact": "consequência concreta, ou null",
-      "recommendation": "o que avaliar/corrigir, ou null",
+      "recommendation": "o que o revisor deve conferir ('Confira se ...'), ou null",
       "commentType": "BLOCKER|QUESTION|SUGGESTION|OBSERVATION|PRAISE",
       "suggestedComment": "comentário reescrito em pt-BR, ou null"
     }

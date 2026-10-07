@@ -58,18 +58,20 @@ na seção "Qualidade da análise" do relatório.
 
 ## Estrutura do relatório
 
+O relatório é um **double-check para um revisor experiente**, não um gate de merge: aponta
+onde ter cuidado e o que conferir. Nada é escondido por ser menor — só ocupa menos espaço.
+
 ```
+EM 30 SEGUNDOS            2 a 4 áreas onde ter cuidado, uma linha cada
 ENTENDIMENTO DA ALTERAÇÃO
 MUDANÇAS ESTRUTURAIS DETECTADAS
-PONTOS QUE EU REVISARIA NO MR
-  🔴 Solicitaria ajuste       (bloqueantes: evidência + cenário de falha)
-  🟡 Questionaria             (risco legítimo sem prova suficiente)
-  🔵 Sugestões                (não bloqueiam)
-  ✅ Pontos tecnicamente adequados
-DÍVIDA TÉCNICA NÃO INTRODUZIDA POR ESTE MR
-PARECER TÉCNICO
-PARECER          → APPROVE | APPROVE_WITH_SUGGESTIONS | NEEDS_DISCUSSION | REQUEST_CHANGES
-QUALIDADE DA ANÁLISE
+🔍 ONDE TER CUIDADO       o que conferir · por quê · como conferir (trecho do código)
+📝 ITENS MENORES          uma linha cada: baixa severidade, sugestão, ou pergunta
+                          sobre configuração, build, docs ou teste
+✅ JÁ COBERTO PELO MR
+PERGUNTAS AO AUTOR
+DÍVIDA PRÉ-EXISTENTE
+QUALIDADE DA ANÁLISE      inclui o sinal agregado (APPROVE … REQUEST_CHANGES) como metadado
 ```
 
 Categorias vazias não são impressas.

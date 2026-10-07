@@ -125,6 +125,18 @@ enum class FindingScope {
 }
 
 /** Etapa que produziu o finding. Usado para rastreabilidade no relatório JSON. */
+/**
+ * Quanto do tempo do revisor o item merece. O relatório é um double-check para um time
+ * experiente, não um gate: nada é escondido, mas o que é menor ocupa uma linha.
+ */
+enum class AttentionLevel {
+    /** "Onde ter cuidado": cartão com o que conferir, por quê e como conferir. */
+    CAREFUL,
+
+    /** "Itens menores": uma linha. */
+    MINOR
+}
+
 enum class FindingOrigin {
     STATIC_RULE,
     LOCAL_REVIEW,
@@ -170,7 +182,9 @@ data class ReviewFinding(
     val origin: FindingOrigin = FindingOrigin.LOCAL_REVIEW,
     val componentsAffected: List<String> = emptyList(),
     val relatedFiles: List<String> = emptyList(),
-    val validation: ValidationOutcome? = null
+    val validation: ValidationOutcome? = null,
+    /** Decidido pelo analisador: se o item merece cartão completo ou uma linha no relatório. */
+    val attention: AttentionLevel = AttentionLevel.CAREFUL
 ) {
     val hasEvidence: Boolean
         get() = !evidence.isNullOrBlank() || !failureScenario.isNullOrBlank()

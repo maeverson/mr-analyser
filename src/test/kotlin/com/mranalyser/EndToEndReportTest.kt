@@ -50,28 +50,26 @@ class EndToEndReportTest {
         val report = analyzer.analyse(mergeRequest)
         val console = ConsoleReportRenderer().render(mergeRequest, report)
 
-        // O que revisar, e por que.
-        assertTrue(console.contains("PONTOS QUE EU REVISARIA NO MR"))
-        assertTrue(console.contains("🔴 SOLICITARIA AJUSTE"))
+        // Onde ter cuidado, e o que conferir.
+        assertTrue(console.contains("EM 30 SEGUNDOS"))
+        assertTrue(console.contains("🔍 ONDE TER CUIDADO"))
         assertTrue(console.contains("Cancelamento externo confirmado antes da persistência local"))
 
         // Onde — arquivo e linha reais, não índice dentro do diff.
         assertTrue(console.contains("InvoiceCancellationService.kt:84"))
 
-        // Em qual cenário, e qual impacto.
-        assertTrue(console.contains("Evidência:"))
-        assertTrue(console.contains("Cenário de falha:"))
-        assertTrue(console.contains("Impacto:"))
+        // Como conferir, em qual cenário e por quê.
+        assertTrue(console.contains("O que conferir:"))
+        assertTrue(console.contains("Como conferir:"))
+        assertTrue(console.contains("Cenário a considerar:"))
+        assertTrue(console.contains("Por quê:"))
 
-        // O que comentar no GitLab.
-        assertTrue(console.contains("Comentário sugerido:"))
+        // O que comentar no GitLab, se o revisor quiser.
+        assertTrue(console.contains("Se for comentar no MR:"))
 
-        // Conclusão acionável.
-        assertTrue(console.contains("PARECER"))
-        assertTrue(console.contains("REQUEST_CHANGES"))
-        assertTrue(console.contains("Bloqueadores: 1"))
-        assertTrue(console.contains("Principal risco:"))
-        assertTrue(console.contains("Confiança da análise: HIGH"))
+        // A recomendação agregada é metadado, não veredito.
+        assertTrue(console.contains("Sinal agregado: REQUEST_CHANGES"))
+        assertTrue(console.contains("confiança da análise: HIGH"))
 
         // Transparência sobre a própria análise.
         assertTrue(console.contains("QUALIDADE DA ANÁLISE"))

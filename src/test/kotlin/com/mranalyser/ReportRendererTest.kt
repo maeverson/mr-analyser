@@ -2,6 +2,7 @@ package com.mranalyser
 
 import com.mranalyser.domain.model.AnalysisConfidence
 import com.mranalyser.domain.model.AnalysisQuality
+import com.mranalyser.domain.model.AttentionLevel
 import com.mranalyser.domain.model.ArchitecturalSignal
 import com.mranalyser.domain.model.ArchitecturalSignalKind
 import com.mranalyser.domain.model.BlastRadius
@@ -34,38 +35,49 @@ class ConsoleReportRendererTest {
 
         listOf(
             "📋 MR REVIEW REPORT",
+            "EM 30 SEGUNDOS",
+            "InvoiceCancellationService — conferir a ordem entre cancel() e save()",
             "ENTENDIMENTO DA ALTERAÇÃO",
             "MUDANÇAS ESTRUTURAIS DETECTADAS",
-            "PONTOS QUE EU REVISARIA NO MR",
-            "🔴 SOLICITARIA AJUSTE",
-            "🟡 QUESTIONARIA",
-            "🔵 SUGESTÕES",
-            "✅ PONTOS TECNICAMENTE ADEQUADOS",
-            "DÍVIDA TÉCNICA IDENTIFICADA",
-            "PARECER TÉCNICO",
-            "PARECER",
+            "🔍 ONDE TER CUIDADO",
+            "📝 ITENS MENORES",
+            "✅ JÁ COBERTO PELO MR",
+            "PERGUNTAS AO AUTOR",
+            "DÍVIDA PRÉ-EXISTENTE",
             "QUALIDADE DA ANÁLISE"
         ).forEach { assertTrue(output.contains(it), "faltou a seção: $it") }
+
+        // O relatório é double-check, não veredito: a recomendação só aparece como metadado.
+        listOf("PARECER TÉCNICO", "SOLICITARIA AJUSTE", "Bloqueadores:").forEach {
+            assertFalse(output.contains(it), "linguagem de veredito ainda presente: $it")
+        }
+        assertTrue(output.contains("Sinal agregado: REQUEST_CHANGES"))
     }
 
     @Test
-    fun `deve numerar findings continuamente entre as secoes`() {
+    fun `itens de cuidado viram cartao e itens menores viram uma linha`() {
         val output = renderer.render(mergeRequest(), fullReport())
 
-        assertTrue(output.contains("1. [HIGH/BUG]"))
-        assertTrue(output.contains("2. [MEDIUM/QUESTION]"))
-        assertTrue(output.contains("3. [LOW/SUGGESTION]"))
+        assertTrue(output.contains("1. src/main/kotlin/billing/application/InvoiceCancellationService.kt"))
+        assertTrue(output.contains("2. "))
+        val minorSection = output.substringAfter("📝 ITENS MENORES")
+        assertTrue(minorSection.contains("— Cobertura do cancelamento idempotente"))
+        assertFalse(
+            output.substringBefore("📝 ITENS MENORES").contains("Cobertura do cancelamento idempotente"),
+            "item menor não deve ocupar cartão em Onde ter cuidado"
+        )
     }
 
     @Test
     fun `deve exibir evidencia cenario de falha e comentario sugerido`() {
         val output = renderer.render(mergeRequest(), fullReport())
 
-        assertTrue(output.contains("Evidência:"))
-        assertTrue(output.contains("Cenário de falha:"))
-        assertTrue(output.contains("Comentário sugerido:"))
+        assertTrue(output.contains("O que conferir:"))
+        assertTrue(output.contains("Como conferir:"))
+        assertTrue(output.contains("Cenário a considerar:"))
+        assertTrue(output.contains("Se for comentar no MR:"))
         assertTrue(output.contains("> Como garantimos consistência"))
-        assertTrue(output.contains("bloqueia o merge"))
+        assertFalse(output.contains("bloqueia o merge"))
     }
 
     @Test
@@ -81,12 +93,12 @@ class ConsoleReportRendererTest {
             )
         )
 
-        assertFalse(output.contains("🔴 SOLICITARIA AJUSTE"))
-        assertFalse(output.contains("🟡 QUESTIONARIA"))
-        assertFalse(output.contains("DÍVIDA TÉCNICA"))
+        assertFalse(output.contains("ONDE TER CUIDADO\n"))
+        assertFalse(output.contains("ITENS MENORES"))
+        assertFalse(output.contains("DÍVIDA PRÉ-EXISTENTE"))
         assertFalse(output.contains("MUDANÇAS ESTRUTURAIS"))
-        assertTrue(output.contains("Não identifiquei pontos que exigissem comentário"))
-        assertTrue(output.contains("APPROVE"))
+        assertTrue(output.contains("Nenhuma área exigiu atenção especial"))
+        assertTrue(output.contains("Não identifiquei pontos que exigissem atenção"))
     }
 
     @Test
@@ -120,19 +132,18 @@ class MarkdownReportRendererTest {
             "# 📋 Análise do MR !101",
             "## 🧠 Entendimento da alteração",
             "## 🏗️ Mudanças estruturais detectadas",
-            "## 🎯 Pontos que eu revisaria no MR",
-            "### 🔴 Solicitaria ajuste",
-            "### 🟡 Questionaria",
-            "### 🔵 Sugestões",
-            "### ✅ Pontos tecnicamente adequados",
-            "## 🧹 Dívida técnica identificada",
-            "## 🧭 Parecer técnico",
-            "## 🚦 Parecer final",
+            "## ⏱️ Em 30 segundos",
+            "## 🔍 Onde ter cuidado",
+            "## 📝 Itens menores",
+            "## ✅ Já coberto pelo MR",
+            "## 🧹 Dívida pré-existente",
             "## 📊 Qualidade da análise"
         ).forEach { assertTrue(output.contains(it), "faltou a seção: $it") }
 
-        assertTrue(output.contains("**Evidência:**"))
-        assertTrue(output.contains("**Cenário de falha:**"))
+        assertTrue(output.contains("**O que conferir:**"))
+        assertTrue(output.contains("**Como conferir:**"))
+        assertFalse(output.contains("Parecer final"))
+        assertFalse(output.contains("| Parecer |"))
     }
 }
 
@@ -274,7 +285,7 @@ private fun fullReport(): ReviewReport = ReviewReport(
             category = ReviewCategory.TESTABILITY,
             title = "Cobertura do cancelamento idempotente",
             comment = "Vale um teste para cancelamento repetido?"
-        ),
+        ).copy(attention = AttentionLevel.MINOR),
         finding(
             severity = Severity.MEDIUM,
             type = FindingType.DESIGN,
@@ -306,7 +317,8 @@ private fun fullReport(): ReviewReport = ReviewReport(
     opinion = TechnicalOpinion(
         opinion = "Existe risco concreto de inconsistência entre o provider e o estado local.",
         mainRisk = "Inconsistência entre cancelamento externo e persistência da invoice.",
-        analysisConfidence = AnalysisConfidence.HIGH
+        analysisConfidence = AnalysisConfidence.HIGH,
+        attentionAreas = listOf("InvoiceCancellationService — conferir a ordem entre cancel() e save()")
     ),
     quality = AnalysisQuality(
         filesChanged = 2,

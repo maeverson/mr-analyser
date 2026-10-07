@@ -158,7 +158,7 @@ answer for most MRs — do not invent one to justify this step.
       "evidence": "cite os DOIS lados: arquivo:linha de cada um e o que cada um faz",
       "failureScenario": "1. ...\\n2. ...\\n3. estado resultante",
       "impact": "consequência concreta",
-      "recommendation": "o que avaliar ou corrigir",
+      "recommendation": "o que o revisor deve conferir, no imperativo: 'Confira se ...'",
       "blocking": false,
       "commentType": "BLOCKER|QUESTION|SUGGESTION|OBSERVATION",
       "suggestedComment": "comentário em pt-BR no estilo de um revisor sênior",

@@ -42,6 +42,32 @@ internal object ReviewNarrative {
             ?: report.questionFindings.firstOrNull()?.title
     }
 
+    /**
+     * Resumo de 30 segundos. Vem do modelo quando a etapa final rodou; senão, é montado a partir
+     * dos itens de "onde ter cuidado", agrupados por arquivo — pior redação, mesma informação.
+     */
+    fun attentionAreas(report: ReviewReport, max: Int = 4): List<String> {
+        report.opinion?.attentionAreas?.filter { it.isNotBlank() }?.takeIf { it.isNotEmpty() }?.let {
+            return it.take(max)
+        }
+        return report.carefulFindings
+            .groupBy { it.file?.substringAfterLast('/') ?: "geral" }
+            .entries
+            .take(max)
+            .map { (file, findings) -> "$file — ${findings.joinToString("; ") { it.title }}" }
+    }
+
+    /** "O que conferir": a recomendação já vem no imperativo; sem ela, a descrição. */
+    fun whatToCheck(finding: ReviewFinding): String = finding.recommendation?.takeIf { it.isNotBlank() }
+        ?: finding.description
+
+    /** "Por quê": o impacto; sem ele, a descrição (quando ela não foi usada como "o que conferir"). */
+    fun why(finding: ReviewFinding): String? = finding.impact?.takeIf { it.isNotBlank() }
+        ?: finding.description.takeIf { !finding.recommendation.isNullOrBlank() }
+
+    /** Uma linha de item menor: `arquivo:linha — título`. */
+    fun minorLine(finding: ReviewFinding): String = "${finding.location} — ${finding.title}"
+
     /** Cabeçalho de um finding: `[HIGH/BUG] arquivo:linha`. */
     fun findingHeader(finding: ReviewFinding): String =
         "[${finding.severity.name}/${finding.type.name}] ${finding.location}"

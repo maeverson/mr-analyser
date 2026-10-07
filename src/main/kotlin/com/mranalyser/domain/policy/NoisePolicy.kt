@@ -1,6 +1,5 @@
 package com.mranalyser.domain.policy
 
-import com.mranalyser.domain.model.FindingType
 import com.mranalyser.domain.model.ReviewCategory
 import com.mranalyser.domain.model.ReviewFinding
 import com.mranalyser.domain.model.Severity
@@ -47,18 +46,6 @@ class NoisePolicy(
             return Decision(true, "documentação sem impacto declarado")
         }
 
-        // Critério objetivo (local + tipo + severidade), não de texto: pergunta ou sugestão de
-        // baixa severidade num manifesto de dependências é "justifique a versão", que nenhum
-        // modelo testado deixou de gerar mesmo instruído a descartar. Dependência com problema
-        // concreto chega com severidade MEDIUM ou mais e continua passando.
-        if (finding.isInDependencyManifest() &&
-            (finding.type == FindingType.QUESTION || finding.type == FindingType.SUGGESTION) &&
-            !finding.blocking &&
-            !finding.severity.atLeast(Severity.MEDIUM)
-        ) {
-            return Decision(true, "pergunta de baixa severidade sobre manifesto de dependências")
-        }
-
         return Decision(false)
     }
 
@@ -77,15 +64,5 @@ class NoisePolicy(
             return false
         }
         return true
-    }
-
-    private fun ReviewFinding.isInDependencyManifest(): Boolean =
-        file?.substringAfterLast('/') in DEPENDENCY_MANIFESTS
-
-    private companion object {
-        val DEPENDENCY_MANIFESTS = setOf(
-            "package.json", "pom.xml", "build.gradle", "build.gradle.kts", "requirements.txt",
-            "pyproject.toml", "go.mod", "Cargo.toml", "Gemfile", "composer.json"
-        )
     }
 }

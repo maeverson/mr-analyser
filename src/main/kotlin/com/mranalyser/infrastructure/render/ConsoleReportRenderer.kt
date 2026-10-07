@@ -7,12 +7,12 @@ import com.mranalyser.domain.model.ReviewFinding
 import com.mranalyser.domain.model.ReviewReport
 
 /**
- * Relatório de console no formato do item 36.
+ * Relatório de console.
  *
- * A seção central é "Pontos que eu revisaria no MR" (item 22): é o produto principal da
- * ferramenta. A listagem por severidade da V1 foi substituída por agrupamento pela **ação que o
- * revisor tomaria** — solicitar ajuste, questionar, sugerir — porque é isso que o revisor precisa
- * decidir. Categorias vazias não são impressas.
+ * A ferramenta é um double-check para um revisor experiente, não um gate de merge. O relatório
+ * abre com onde ter cuidado em 30 segundos; a seção central é "Onde ter cuidado", com o que
+ * conferir, por quê e como conferir; o que é menor ocupa uma linha. A recomendação agregada é um
+ * metadado no fim, não um veredito. Categorias vazias não são impressas.
  */
 class ConsoleReportRenderer(
     private val showLowConfidence: Boolean = false,
@@ -22,14 +22,15 @@ class ConsoleReportRenderer(
         val sb = StringBuilder()
 
         renderHeader(sb, mergeRequest)
+        renderSummary(sb, report)
         renderUnderstanding(sb, report.understanding, report.summary)
         renderArchitecturalSignals(sb, report)
-        renderReviewPoints(sb, report)
-        renderPreExisting(sb, report)
+        renderCareful(sb, report)
+        renderMinor(sb, report)
+        renderPositives(sb, report)
         renderOpenQuestions(sb, report)
-        renderOpinion(sb, report)
-        renderVerdict(sb, report)
-        renderQuality(sb, report.quality)
+        renderPreExisting(sb, report)
+        renderQuality(sb, report)
 
         return sb.toString().trimEnd()
     }
@@ -101,91 +102,99 @@ class ConsoleReportRenderer(
         sb.appendLine()
     }
 
-    private fun renderReviewPoints(sb: StringBuilder, report: ReviewReport) {
+    private fun renderSummary(sb: StringBuilder, report: ReviewReport) {
         sb.appendLine(DIVIDER)
         sb.appendLine()
-        sb.appendLine("PONTOS QUE EU REVISARIA NO MR")
+        sb.appendLine("EM 30 SEGUNDOS")
         sb.appendLine()
-
-        var counter = 0
-
-        counter = renderBucket(sb, "🔴 SOLICITARIA AJUSTE", report.blockingFindings, counter)
-        counter = renderBucket(sb, "🟡 QUESTIONARIA", report.questionFindings, counter)
-        counter = renderBucket(sb, "🔵 SUGESTÕES", report.suggestionFindings, counter)
-
-        if (report.positivePoints.isNotEmpty()) {
-            sb.appendLine("✅ PONTOS TECNICAMENTE ADEQUADOS")
-            sb.appendLine()
-            report.positivePoints.forEach { sb.appendLine("   - $it") }
+        report.opinion?.opinion?.takeIf { it.isNotBlank() }?.let {
+            sb.appendLine(indent(it))
             sb.appendLine()
         }
-
-        if (counter == 0 && report.positivePoints.isEmpty()) {
-            sb.appendLine("   Não identifiquei pontos que exigissem comentário neste MR.")
-            sb.appendLine()
+        val areas = ReviewNarrative.attentionAreas(report)
+        if (areas.isEmpty()) {
+            sb.appendLine("   Nenhuma área exigiu atenção especial nesta análise.")
+        } else {
+            sb.appendLine("   Onde ter cuidado:")
+            areas.forEach { sb.appendLine("   - $it") }
         }
+        sb.appendLine()
     }
 
-    private fun renderBucket(
-        sb: StringBuilder,
-        title: String,
-        findings: List<ReviewFinding>,
-        startingCounter: Int
-    ): Int {
-        if (findings.isEmpty()) {
-            return startingCounter
+    private fun renderCareful(sb: StringBuilder, report: ReviewReport) {
+        val careful = report.carefulFindings
+        if (careful.isEmpty()) {
+            return
         }
-
-        sb.appendLine(title)
+        sb.appendLine(DIVIDER)
         sb.appendLine()
-
-        var counter = startingCounter
-        findings.forEach { finding ->
-            counter++
-            renderFinding(sb, counter, finding)
-        }
-        return counter
+        sb.appendLine("🔍 ONDE TER CUIDADO")
+        sb.appendLine()
+        careful.forEachIndexed { index, finding -> renderFinding(sb, index + 1, finding) }
     }
 
     private fun renderFinding(sb: StringBuilder, number: Int, finding: ReviewFinding) {
-        sb.appendLine("$number. ${ReviewNarrative.findingHeader(finding)} ${finding.title}")
+        sb.appendLine("$number. ${finding.location} — ${finding.title}")
         sb.appendLine()
-        sb.appendLine("   ${finding.description}")
+        sb.appendLine("   O que conferir: ${ReviewNarrative.whatToCheck(finding)}")
+
+        ReviewNarrative.why(finding)?.let {
+            sb.appendLine()
+            sb.appendLine("   Por quê: $it")
+        }
 
         finding.evidence?.let {
             sb.appendLine()
-            sb.appendLine("   Evidência:")
+            sb.appendLine("   Como conferir:")
             sb.appendLine("   $it")
         }
 
         finding.failureScenario?.let { scenario ->
             sb.appendLine()
-            sb.appendLine("   Cenário de falha:")
+            sb.appendLine("   Cenário a considerar:")
             ReviewNarrative.failureScenarioLines(scenario).forEach { sb.appendLine("   $it") }
-        }
-
-        finding.impact?.let {
-            sb.appendLine()
-            sb.appendLine("   Impacto: $it")
-        }
-
-        finding.recommendation?.let {
-            sb.appendLine()
-            sb.appendLine("   O que avaliar: $it")
         }
 
         finding.suggestedComment?.let {
             sb.appendLine()
-            sb.appendLine("   Comentário sugerido:")
+            sb.appendLine("   Se for comentar no MR:")
             it.lines().forEach { line -> sb.appendLine("   > $line") }
         }
 
         sb.appendLine()
         sb.appendLine(
-            "   [confiança ${ReviewNarrative.formatConfidence(finding.confidence)}" +
-                " | categoria ${finding.category.label}" +
-                " | ${if (finding.blocking) "bloqueia o merge" else "não bloqueia"}]"
+            "   [${finding.severity.name} | confiança ${ReviewNarrative.formatConfidence(finding.confidence)}" +
+                " | ${finding.category.label}]"
         )
+        sb.appendLine()
+    }
+
+    private fun renderMinor(sb: StringBuilder, report: ReviewReport) {
+        val minor = report.minorFindings
+        if (minor.isEmpty()) {
+            return
+        }
+        sb.appendLine(DIVIDER)
+        sb.appendLine()
+        sb.appendLine("📝 ITENS MENORES")
+        sb.appendLine()
+        minor.forEach { sb.appendLine("   - ${ReviewNarrative.minorLine(it)}") }
+        sb.appendLine()
+    }
+
+    private fun renderPositives(sb: StringBuilder, report: ReviewReport) {
+        if (report.positivePoints.isEmpty()) {
+            if (report.findings.isEmpty()) {
+                sb.appendLine("   Não identifiquei pontos que exigissem atenção neste MR.")
+                sb.appendLine()
+            }
+            return
+        }
+        sb.appendLine(DIVIDER)
+        sb.appendLine()
+        sb.appendLine("✅ JÁ COBERTO PELO MR")
+        sb.appendLine()
+        report.positivePoints.forEach { sb.appendLine("   - $it") }
         sb.appendLine()
     }
 
@@ -196,7 +205,7 @@ class ConsoleReportRenderer(
         }
         sb.appendLine(DIVIDER)
         sb.appendLine()
-        sb.appendLine("DÍVIDA TÉCNICA IDENTIFICADA — NÃO INTRODUZIDA POR ESTE MR")
+        sb.appendLine("DÍVIDA PRÉ-EXISTENTE — NÃO INTRODUZIDA POR ESTE MR")
         sb.appendLine()
         preExisting.forEach { finding ->
             sb.appendLine("   - ${ReviewNarrative.findingHeader(finding)} ${finding.title}")
@@ -219,46 +228,18 @@ class ConsoleReportRenderer(
         sb.appendLine()
     }
 
-    private fun renderOpinion(sb: StringBuilder, report: ReviewReport) {
-        val opinion = report.opinion ?: return
+    private fun renderQuality(sb: StringBuilder, report: ReviewReport) {
+        val quality = report.quality ?: return
+
         sb.appendLine(DIVIDER)
         sb.appendLine()
-        sb.appendLine("PARECER TÉCNICO")
-        sb.appendLine()
-        sb.appendLine(indent(opinion.opinion))
-        sb.appendLine()
-    }
-
-    private fun renderVerdict(sb: StringBuilder, report: ReviewReport) {
-        sb.appendLine(DIVIDER)
-        sb.appendLine("PARECER")
-        sb.appendLine()
-        sb.appendLine("   ${ReviewNarrative.recommendationLabel(report.recommendation)}")
-        sb.appendLine("   ${ReviewNarrative.recommendationExplanation(report.recommendation)}")
-        sb.appendLine()
-        sb.appendLine("   Bloqueadores: ${report.blockingFindings.size}")
-        sb.appendLine("   Questionamentos: ${report.questionFindings.size}")
-        sb.appendLine("   Sugestões: ${report.suggestionFindings.size}")
-
-        ReviewNarrative.mainRisk(report)?.let {
-            sb.appendLine()
-            sb.appendLine("   Principal risco:")
-            sb.appendLine("   $it")
-        }
-
-        sb.appendLine()
-        sb.appendLine("   Confiança da análise: ${ReviewNarrative.confidenceLabel(report.opinion?.analysisConfidence)}")
-        sb.appendLine(DIVIDER)
-        sb.appendLine()
-    }
-
-    private fun renderQuality(sb: StringBuilder, quality: AnalysisQuality?) {
-        if (quality == null) {
-            return
-        }
-
         sb.appendLine("QUALIDADE DA ANÁLISE")
         sb.appendLine()
+        // Metadado, não veredito: o relatório não aprova nem bloqueia.
+        sb.appendLine(
+            "   Sinal agregado: ${ReviewNarrative.recommendationLabel(report.recommendation)}" +
+                " | confiança da análise: ${ReviewNarrative.confidenceLabel(report.opinion?.analysisConfidence)}"
+        )
         sb.appendLine("   Arquivos analisados: ${quality.filesAnalysed}/${quality.filesChanged}")
         sb.appendLine("   Chunks analisados: ${quality.chunksAnalysed}" + failedSuffix(quality))
         sb.appendLine("   Contextos relacionados carregados: ${quality.relatedContextsLoaded}")
@@ -298,7 +279,7 @@ class ConsoleReportRenderer(
             sb.appendLine(
                 "   Exibindo também findings abaixo do limite de confiança " +
                     "(${ReviewNarrative.formatConfidence(minimumConfidence)}); " +
-                    "eles não participam da recomendação de merge."
+                    "eles não participam do sinal agregado."
             )
         }
     }

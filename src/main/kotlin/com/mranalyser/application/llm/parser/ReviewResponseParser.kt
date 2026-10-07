@@ -91,7 +91,8 @@ class ReviewResponseParser {
                 opinion = TechnicalOpinion(
                     opinion = root.str("opinion") ?: root.str("parecer").orEmpty(),
                     mainRisk = root.str("mainRisk"),
-                    analysisConfidence = EnumCoercion.analysisConfidence(root.str("analysisConfidence"))
+                    analysisConfidence = EnumCoercion.analysisConfidence(root.str("analysisConfidence")),
+                    attentionAreas = root.strList("attentionAreas")
                 ),
                 suggestedRecommendation = EnumCoercion.recommendation(root.str("recommendation")),
                 questions = root.strList("questions"),

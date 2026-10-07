@@ -54,7 +54,8 @@ class JsonReportRenderer : ReportRenderer {
                 JsonOpinion(
                     opinion = it.opinion,
                     mainRisk = it.mainRisk,
-                    analysisConfidence = it.analysisConfidence.name
+                    analysisConfidence = it.analysisConfidence.name,
+                    attentionAreas = it.attentionAreas
                 )
             },
             findings = report.findings.map { finding ->
@@ -71,6 +72,7 @@ class JsonReportRenderer : ReportRenderer {
                     description = finding.description,
                     evidence = finding.evidence,
                     reasoning = finding.reasoning,
+                    attention = finding.attention.name,
                     failureScenario = finding.failureScenario,
                     impact = finding.impact,
                     recommendation = finding.recommendation,
@@ -166,6 +168,7 @@ data class JsonArchitecturalSignal(
 data class JsonOpinion(
     val opinion: String,
     val mainRisk: String? = null,
+    val attentionAreas: List<String> = emptyList(),
     val analysisConfidence: String
 )
 
@@ -183,6 +186,7 @@ data class JsonFinding(
     val description: String,
     val evidence: String? = null,
     val reasoning: String? = null,
+    val attention: String = "CAREFUL",
     val failureScenario: String? = null,
     val impact: String? = null,
     val recommendation: String? = null,

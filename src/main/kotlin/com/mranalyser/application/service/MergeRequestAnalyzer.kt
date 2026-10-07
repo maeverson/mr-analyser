@@ -73,7 +73,8 @@ class MergeRequestAnalyzer(
     private val recommendationCalculator: MergeRecommendationCalculator,
     private val settings: AnalyzerSettings = AnalyzerSettings(),
     private val knowledgeRetriever: KnowledgeBaseRetriever = KnowledgeBaseRetriever(provider = null),
-    private val groundingCheck: EvidenceGroundingCheck = EvidenceGroundingCheck()
+    private val groundingCheck: EvidenceGroundingCheck = EvidenceGroundingCheck(),
+    private val attentionClassifier: AttentionClassifier = AttentionClassifier()
 ) {
     private val logger = LoggerFactory.getLogger(MergeRequestAnalyzer::class.java)
 
@@ -209,7 +210,11 @@ class MergeRequestAnalyzer(
             .map(blockingPolicy::apply)
             .map { finding -> if (validated.validated) finding else blockingPolicy.revokeBlocking(finding) }
 
+        val groups = files.associate { it.path to it.group }
         val (visible, filtered) = applyVisibilityFilters(refined, diagnostics)
+            .let { (shown, decided) ->
+                shown.map { attentionClassifier.classify(it, groups::get) } to decided
+            }
 
         val questions = deduplicator.distinctStatements(
             localResults.flatMap { it.questions } + crossFile.questions,

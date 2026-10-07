@@ -3,8 +3,8 @@ package com.mranalyser.application.llm.prompt
 import com.mranalyser.application.port.LlmPurpose
 import com.mranalyser.application.port.LlmRequest
 import com.mranalyser.application.review.FinalAssessmentInput
-import com.mranalyser.domain.model.bucket
-import com.mranalyser.domain.model.ReviewBucket
+import com.mranalyser.domain.model.AttentionLevel
+import com.mranalyser.domain.model.FindingScope
 
 /**
  * Etapa 5: parecer executivo (itens 21 e 23).
@@ -68,11 +68,10 @@ class FinalAssessmentPrompt(
         return buildString {
             appendLine("## FINDINGS VALIDADOS")
             input.findings.forEach { finding ->
-                val section = when (finding.bucket()) {
-                    ReviewBucket.BLOCKING -> "SOLICITARIA AJUSTE"
-                    ReviewBucket.QUESTION -> "QUESTIONARIA"
-                    ReviewBucket.SUGGESTION -> "SUGESTÃO"
-                    ReviewBucket.PRE_EXISTING -> "PRÉ-EXISTENTE"
+                val section = when {
+                    finding.scope == FindingScope.PRE_EXISTING -> "PRÉ-EXISTENTE"
+                    finding.attention == AttentionLevel.MINOR -> "MENOR"
+                    else -> "ONDE TER CUIDADO"
                 }
                 appendLine()
                 appendLine("- [$section][${finding.severity.name}/${finding.type.name}/${finding.category.name}] ${finding.location}")
@@ -86,47 +85,48 @@ class FinalAssessmentPrompt(
 
     private companion object {
         val SYSTEM_EXTRA = """
-In this step you do NOT look for new problems and you do NOT re-open the diff. You write the
-executive opinion a reviewer would leave on the MR, based strictly on the validated findings
-listed in the user message. Do not mention any problem that is not in that list.
+In this step you do NOT look for new problems and you do NOT re-open the diff. You summarise,
+for the human reviewer, where the validated findings say they should be careful. Do not mention
+any problem that is not in that list.
 """.trim()
 
         val TASK = """
-# TAREFA: PARECER TÉCNICO
+# TAREFA: RESUMO PARA O REVISOR
 
-Write the final opinion. It must be short, technical and conclusive — 3 to 5 sentences in
-Brazilian Portuguese, in first person, as a reviewer summarising their position. Structure it as:
+The reader is an experienced engineer who will review this MR anyway. This report is a safety
+double-check: it never approves or blocks anything. Your job is to tell them, in 30 seconds,
+where in this MR they should be careful.
 
-1. whether the implementation is coherent with the MR's objective;
-2. the point (if any) that deserves adjustment before merge, and why;
-3. what you would leave as non-blocking questions or suggestions.
+"attentionAreas": 2 to 4 items in Brazilian Portuguese, most important first. Each item is ONE
+line in the form "<area of the MR> — <what to verify>", naming the real component, file or rule
+of this MR. Build them from the "ONDE TER CUIDADO" findings and from the understanding; group
+related findings into one area. Example of the FORM only (not of content):
+"<adapter X> — <conferir se a falha Y é tratada>". If nothing deserves care, return [].
 
-Name the real components and findings of this MR (e.g. the adapter, endpoint or rule involved);
-an opinion that would fit any other MR is useless. Count the questions and suggestions from the
-list below — do not invent a number.
+"opinion": 1 to 2 sentences in Brazilian Portuguese: what the change does and how risky it is to
+review (e.g. "mudança contida, risco concentrado na integração nova"). No approval language, no
+"antes do merge", no counting of findings.
 
-If the list of validated findings is empty, say so plainly and state that you would approve.
-Do not manufacture concerns to fill the opinion.
-
-"mainRisk": the single most relevant risk of this MR in one sentence, or null if there is none.
+"mainRisk": the single area that deserves the most care, in one sentence, or null.
 
 "analysisConfidence": how much confidence YOU have in this analysis, given the evidence available
 (HIGH only with direct evidence and no stated limitation).
 
-"recommendation": your suggestion. Note that the final decision is computed deterministically from
-the findings; your suggestion can raise the outcome to NEEDS_DISCUSSION but only a finding with
-evidence and a failure scenario produces REQUEST_CHANGES.
+"recommendation": kept for automation only; it is not shown as a verdict.
+
+Never reuse sentences from these instructions. Do not manufacture concerns to fill the summary.
 """.trim()
 
         val SCHEMA = """
 ## FORMATO DE RESPOSTA (JSON único)
 {
-  "opinion": "3 a 5 frases em pt-BR, primeira pessoa, conclusivas",
-  "mainRisk": "principal risco em uma frase, ou null",
+  "attentionAreas": ["<área> — <o que conferir>"],
+  "opinion": "1 a 2 frases em pt-BR sobre o que a mudança faz e onde está o risco",
+  "mainRisk": "a área que mais merece cuidado, em uma frase, ou null",
   "analysisConfidence": "HIGH|MEDIUM|LOW",
   "recommendation": "APPROVE|APPROVE_WITH_SUGGESTIONS|NEEDS_DISCUSSION|REQUEST_CHANGES",
-  "questions": ["questionamentos consolidados que valem levar ao autor"],
-  "positivePoints": ["pontos tecnicamente adequados que valem registrar"]
+  "questions": ["perguntas que valem levar ao autor"],
+  "positivePoints": ["o que o MR já cobre bem e o revisor não precisa reconferir"]
 }
 """.trim()
     }
