@@ -250,6 +250,43 @@ class NoisePolicyTest {
     }
 
     @Test
+    fun `pergunta de baixa severidade em manifesto de dependencias deve ser suprimida`() {
+        val versionQuestion = finding(severity = Severity.INFO, type = FindingType.QUESTION, confidence = 0.6)
+            .copy(file = "package.json", title = "Motivação para a versão específica de axios")
+
+        val decision = NoisePolicy().evaluate(versionQuestion)
+
+        assertTrue(decision.suppressed)
+        assertTrue(decision.reason!!.contains("manifesto de dependências"))
+    }
+
+    @Test
+    fun `problema material em manifesto de dependencias deve continuar`() {
+        val policy = NoisePolicy()
+
+        // Severidade MEDIUM ou mais: dependência com problema concreto.
+        assertFalse(
+            policy.evaluate(
+                finding(severity = Severity.MEDIUM, type = FindingType.QUESTION, confidence = 0.8)
+                    .copy(file = "build.gradle.kts")
+            ).suppressed
+        )
+        // RISK de baixa severidade não é pergunta de preferência.
+        assertFalse(
+            policy.evaluate(
+                finding(severity = Severity.LOW, type = FindingType.RISK, confidence = 0.8).copy(file = "pom.xml")
+            ).suppressed
+        )
+        // Mesma pergunta fora de manifesto continua: a regra é por local, não por texto.
+        assertFalse(
+            policy.evaluate(
+                finding(severity = Severity.INFO, type = FindingType.QUESTION, confidence = 0.6)
+                    .copy(file = "src/config/env.schema.ts")
+            ).suppressed
+        )
+    }
+
+    @Test
     fun `nao deve recomendar comentario de gitlab para estilo nem para INFO`() {
         val policy = NoisePolicy()
 

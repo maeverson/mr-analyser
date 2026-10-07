@@ -211,7 +211,10 @@ class MergeRequestAnalyzer(
 
         val (visible, filtered) = applyVisibilityFilters(refined, diagnostics)
 
-        val questions = deduplicator.distinctStatements(localResults.flatMap { it.questions } + crossFile.questions)
+        val questions = deduplicator.distinctStatements(
+            localResults.flatMap { it.questions } + crossFile.questions,
+            max = MAX_QUESTIONS
+        )
         val positives = deduplicator.distinctStatements(
             localResults.flatMap { it.positivePoints } + crossFile.positivePoints,
             max = MAX_POSITIVE_POINTS
@@ -244,7 +247,8 @@ class MergeRequestAnalyzer(
             findings = visible,
             // Pergunta que só reformula um finding apresentado duplica o ponto no relatório.
             questions = deduplicator.distinctStatements(questions + assessment?.questions.orEmpty())
-                .filterNot { question -> deduplicator.restatesAny(question, visible) },
+                .filterNot { question -> deduplicator.restatesAny(question, visible) }
+                .take(MAX_QUESTIONS),
             positivePoints = deduplicator.distinctStatements(
                 positives + assessment?.positivePoints.orEmpty(),
                 max = MAX_POSITIVE_POINTS
@@ -390,5 +394,8 @@ class MergeRequestAnalyzer(
     private companion object {
         /** Um relatório com 23 pontos positivos, a maioria repetida, esconde os que importam. */
         const val MAX_POSITIVE_POINTS = 6
+
+        /** O 30B gerou 12 perguntas, metade genérica; um revisor leva no máximo meia dúzia ao autor. */
+        const val MAX_QUESTIONS = 6
     }
 }
