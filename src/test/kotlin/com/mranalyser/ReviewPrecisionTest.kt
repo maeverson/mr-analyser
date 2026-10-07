@@ -146,6 +146,24 @@ class ReviewPrecisionTest {
         val deduplicator = FindingDeduplicator()
 
         assertTrue(deduplicator.restatesAny("Possível falha ao lidar com erros de rede. Como tratamos?", listOf(presented)))
+
+        // Caso real do MR !4: a pergunta deriva do comentário sugerido, não do título.
+        val fromComment = finding(evidence = "a", title = "Possível inconsistência entre a validação de `plans.name` e o contrato esperado")
+            .copy(
+                description = "A validação de `plans.name` pode não estar alinhada com o contrato esperado.",
+                suggestedComment = "Seria possível adicionar uma validação explícita para `name` no `plansPageSchema` " +
+                    "no `ProductCoreCatalogAdapter` para garantir que o contrato entre o Product Core e o " +
+                    "billing-backoffice-bff seja consistente?"
+            )
+        assertTrue(
+            deduplicator.restatesAny(
+                "A validação de `plans.name` no `resolveCatalogPlan` está alinhada com o contrato esperado pelo " +
+                    "`ProductCoreCatalogAdapter`? Seria possível adicionar uma validação explícita para `name` no " +
+                    "`plansPageSchema` no `ProductCoreCatalogAdapter` para garantir que o contrato entre o Product Core " +
+                    "e o billing-backoffice-bff seja consistente?",
+                listOf(fromComment)
+            )
+        )
         assertFalse(
             deduplicator.restatesAny("A validação de plans.name vazio cobre os outros consumidores?", listOf(presented))
         )
@@ -176,6 +194,20 @@ class ReviewPrecisionTest {
         val result = FindingDeduplicator().analyse(listOf(inMapper, inAdapter, unrelated), emptyList())
 
         assertEquals(2, result.findings.size)
+    }
+
+    @Test
+    fun `cross-file repetindo achado confirmado em outra linha do arquivo deve ser removido`() {
+        val confirmed = finding(evidence = "a", title = "Uso de 'error as AxiosError' sem verificação de tipo", line = 87)
+            .copy(file = "src/shared/http/http-client.ts")
+        val repeated = finding(
+            evidence = "b",
+            title = "Uso de `error as AxiosError` sem verificação de tipo pode causar falhas inesperadas",
+            line = 68,
+            origin = FindingOrigin.CROSS_FILE_REVIEW
+        ).copy(file = "src/shared/http/http-client.ts")
+
+        assertEquals(1, FindingDeduplicator().analyse(listOf(confirmed, repeated), emptyList()).findings.size)
     }
 
     @Test

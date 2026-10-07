@@ -129,6 +129,14 @@ Then decide:
 - DISCARD                : any of (1) (2) (4) (5) (6) fails, or (3) invalidates it, or the
                            finding refers to removed code, or it is a duplicate of another
                            candidate, or it was already discussed in an existing discussion.
+                           Also DISCARD, as preference rather than problem, a candidate that
+                           only: questions a default or configured value (timeout, retries,
+                           limits) with no fact in the code showing the value is wrong; asks to
+                           justify or pin a dependency version; asks to document a value or a
+                           choice; asks for extra format validation of an input that is already
+                           required and validated; or proposes a generic fallback "for
+                           robustness" without a concrete failure that the current handling
+                           gets wrong.
 - DOWNGRADE_TO_QUESTION  : the concern is legitimate but the evidence is insufficient to assert
                            a problem. This is the correct answer for most uncertain candidates.
 - KEEP                   : evidence is verifiable in the shown code AND the impact is plausible.

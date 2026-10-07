@@ -1,6 +1,7 @@
 package com.mranalyser.application.service
 
 import com.mranalyser.domain.model.Discussion
+import com.mranalyser.domain.model.FindingOrigin
 import com.mranalyser.domain.model.ReviewFinding
 
 /**
@@ -118,12 +119,20 @@ class FindingDeduplicator(
         } else {
             0
         }
+        val similarTitle = jaccard(tokens(existing.title), tokens(candidate.title)) >= titleThreshold
+        // O cross-file é instruído a não repetir achados confirmados, mas repete — e cita outra
+        // linha do mesmo arquivo (a outra ponta da relação). Para ele a distância não protege.
+        val crossFile = existing.origin == FindingOrigin.CROSS_FILE_REVIEW ||
+            candidate.origin == FindingOrigin.CROSS_FILE_REVIEW
+        if (similarTitle && crossFile) {
+            return true
+        }
         if (distance > sameAreaLines) {
             return false
         }
         // Mesmo ponto reescrito por chunks diferentes costuma manter o título e variar toda a
         // descrição — o Jaccard do conjunto ficava abaixo do limiar e o relatório repetia o achado.
-        if (jaccard(tokens(existing.title), tokens(candidate.title)) >= titleThreshold) {
+        if (similarTitle) {
             return true
         }
         return distance <= nearbyLines && jaccard(existingTokens, candidateTokens) >= duplicateThreshold
@@ -161,14 +170,20 @@ class FindingDeduplicator(
             duplicate.relatedFiles).distinct()
     )
 
-    /** A frase está contida no título ou na descrição de algum dos findings? */
+    /**
+     * A frase está contida no texto de algum dos findings? O comentário sugerido entra na
+     * comparação porque é dele que o modelo deriva a pergunta: no MR !4 as perguntas repetiam o
+     * comentário quase literalmente (96% dos termos) e passavam pelo título e descrição (54%).
+     */
     fun restatesAny(statement: String, findings: List<ReviewFinding>): Boolean {
         val statementTokens = tokens(statement).map(::singular).toSet()
         if (statementTokens.size < minimumTokensForCoverage) {
             return false
         }
         return findings.any { finding ->
-            val findingTokens = tokens("${finding.title} ${finding.description}").map(::singular).toSet()
+            val text = listOfNotNull(finding.title, finding.description, finding.suggestedComment, finding.recommendation)
+                .joinToString(" ")
+            val findingTokens = tokens(text).map(::singular).toSet()
             containment(statementTokens, findingTokens) >= restatementThreshold
         }
     }

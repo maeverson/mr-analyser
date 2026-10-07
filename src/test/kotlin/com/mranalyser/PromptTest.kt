@@ -88,6 +88,7 @@ class PromptTest {
         assertTrue(request.system.contains("SKEPTICAL"))
         assertTrue(request.user.contains("try to refute it"))
         assertTrue(request.user.contains("Discarding 12 of 18 candidates is a good outcome"))
+        assertTrue(request.user.contains("justify or pin a dependency version"))
         assertEquals(0.0, request.temperature, "validação deve ser determinística")
     }
 
