@@ -1,6 +1,8 @@
 package com.mranalyser.cli
 
 import com.github.ajalt.clikt.core.CliktCommand
+import com.github.ajalt.clikt.parameters.arguments.argument
+import com.github.ajalt.clikt.parameters.arguments.optional
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
 import com.mranalyser.application.port.MergeRequestProvider
@@ -24,6 +26,10 @@ import com.mranalyser.infrastructure.repository.LocalRepositoryContextProvider
 import kotlinx.coroutines.runBlocking
 
 class AnalyseCommand : CliktCommand(name = "analyse") {
+    private val target by argument(
+        name = "URL|IID",
+        help = "URL do merge request ou IID (atalho para --url / --mr)"
+    ).optional()
     private val project by option("--project", help = "Projeto no formato group/project")
     private val mr by option("--mr", help = "IID do merge request")
     private val url by option("--url", help = "URL completa do merge request")
@@ -48,7 +54,10 @@ class AnalyseCommand : CliktCommand(name = "analyse") {
         var gitLabClient: GitLabClient? = null
 
         try {
-            require(url != null || mr != null) { "Informe --url ou --mr" }
+            val targetIsIid = target?.all(Char::isDigit) == true
+            val effectiveUrl = url ?: target?.takeUnless { targetIsIid }
+            val effectiveMr = mr ?: target?.takeIf { targetIsIid }
+            require(effectiveUrl != null || effectiveMr != null) { "Informe a URL do MR, --url ou --mr" }
 
             val loaded = ConfigLoader().load(
                 verbose = verbose,
@@ -71,7 +80,7 @@ class AnalyseCommand : CliktCommand(name = "analyse") {
                 }
             )
 
-            val (resolvedProject, resolvedMr, resolvedHost) = resolveTarget(project, mr, url)
+            val (resolvedProject, resolvedMr, resolvedHost) = resolveTarget(project, effectiveMr, effectiveUrl)
 
             gitLabClient = GitLabClient(
                 gitlabUrl = resolvedHost ?: config.gitlabUrl,

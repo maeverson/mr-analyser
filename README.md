@@ -231,6 +231,19 @@ Chaves equivalentes por variável de ambiente: `MR_ANALYSER_LLM_TIMEOUT_SECONDS`
 
 ## Uso
 
+O script `./mr-analyser` na raiz recompila só quando o código muda e roda a aplicação sem o
+`--args` do Gradle. Para chamá-lo de qualquer diretório, crie um link no `PATH` uma vez:
+
+```bash
+ln -s "$PWD/mr-analyser" ~/.local/bin/mr-analyser
+
+mr-analyser analyse https://gitlab.com/ctbz/billing/invoices/invoice-core/-/merge_requests/28
+mr-analyser analyse 123 --project grupo/projeto
+```
+
+O script sempre executa a partir da raiz deste projeto, onde ficam `.mranalyser.properties`,
+`skills/` e `reports/`. Via Gradle, continua funcionando:
+
 ```bash
 # por URL
 ./gradlew run --args="analyse --url https://gitlab.com/ctbz/billing/invoices/invoice-core/-/merge_requests/28"

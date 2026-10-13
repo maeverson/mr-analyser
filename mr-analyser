@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Atalho para o mr-analyser: `mr-analyser analyse <url-do-mr>`.
+# Roda a partir da raiz do projeto, onde ficam .mranalyser.properties, skills/ e reports/.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+cd "$ROOT"
+
+# Recompila só quando o código mudou; não rode enquanto outra análise estiver em andamento.
+./gradlew -q --console=plain installDist
+
+exec "$ROOT/build/install/mr-analyser/bin/mr-analyser" "$@"
