@@ -46,6 +46,7 @@ import com.mranalyser.infrastructure.llm.OllamaLlmProvider
 import com.mranalyser.infrastructure.llm.OpenAiLlmProvider
 import com.mranalyser.infrastructure.llm.ProgressLoggingLlmProvider
 import com.mranalyser.infrastructure.llm.ResilientLlmProvider
+import com.mranalyser.infrastructure.llm.ThinkingMode
 import com.mranalyser.application.port.KnowledgeBaseProvider
 import com.mranalyser.infrastructure.knowledge.KbTokenSource
 import com.mranalyser.infrastructure.knowledge.McpKnowledgeBaseProvider
@@ -108,7 +109,9 @@ object AnalyzerFactory {
                 baseUrl = config.llm.url ?: "http://localhost:11434",
                 apiKey = key,
                 settings = transport.copy(
-                    numCtx = config.llm.numCtx ?: OLLAMA_DEFAULT_NUM_CTX
+                    numCtx = config.llm.numCtx ?: OLLAMA_DEFAULT_NUM_CTX,
+                    thinking = ThinkingMode.parse(config.llm.thinking),
+                    reasoningTokens = config.llm.reasoningTokens
                 )
             )
 

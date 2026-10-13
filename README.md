@@ -81,6 +81,10 @@ SLF4J + Logback · JUnit 5 · MockK · WireMock
 
 ## Build
 
+O Gradle Wrapper usa JDK 21 para o daemon e para compilar, independentemente do Java
+padrão do sistema. Se não houver um JDK 21 instalado, ele será baixado automaticamente;
+é necessário ter acesso à internet na primeira execução.
+
 ```bash
 ./gradlew clean build
 ```
@@ -143,6 +147,17 @@ sem receber dados, inclusive antes do primeiro token. O streaming permite geraç
 quando há dados chegando. Timeouts do Ollama não são repetidos automaticamente; as outras
 falhas transitórias continuam seguindo `MR_ANALYSER_LLM_MAX_RETRIES`. Durante a chamada,
 a CLI informa a espera a cada 30 segundos.
+
+Modelos com modo de raciocínio (qwen3, gpt-oss) devem usar raciocínio por etapa: desligado nas
+etapas de volume (um chunk por chamada) e ligado só na validação, onde refutar candidato exige
+pensar. O raciocínio conta no `num_predict`, por isso a validação ganha um orçamento extra.
+
+```properties
+MR_ANALYSER_LLM_THINKING=stage            # none (padrão, não envia o campo) | off | stage | on
+MR_ANALYSER_LLM_REASONING_TOKENS=4000
+```
+
+Use `none` com modelos sem suporte a raciocínio, como o `qwen2.5-coder`.
 
 ### Skills de revisão
 

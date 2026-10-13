@@ -32,8 +32,43 @@ data class LlmTransportSettings(
      * default do Modelfile decidir foi o que estourou a VRAM do servidor e jogou um terço das
      * camadas do modelo para a CPU. `null` mantém o valor do próprio modelo.
      */
-    val numCtx: Int? = null
+    val numCtx: Int? = null,
+    val thinking: ThinkingMode = ThinkingMode.UNSET,
+    /** Tokens somados ao `num_predict` quando o raciocínio está ligado: o pensamento conta no limite. */
+    val reasoningTokens: Int = 4_000
 )
+
+/**
+ * Controle do modo de raciocínio de modelos que o suportam (qwen3, gpt-oss, deepseek-r1).
+ *
+ * [UNSET] não envia o campo — obrigatório para modelos sem suporte, como o qwen2.5-coder, que
+ * podem recusar a requisição. [PER_STAGE] liga só onde [com.mranalyser.application.port.LlmRequest.reasoning]
+ * pede: nas etapas de volume (um chunk por chamada) o raciocínio multiplicaria o tempo e
+ * consumiria o `num_predict` antes do JSON.
+ */
+enum class ThinkingMode {
+    UNSET,
+    OFF,
+    PER_STAGE,
+    ON;
+
+    fun enabledFor(reasoningRequested: Boolean): Boolean? = when (this) {
+        UNSET -> null
+        OFF -> false
+        ON -> true
+        PER_STAGE -> reasoningRequested
+    }
+
+    companion object {
+        fun parse(raw: String?): ThinkingMode = when (raw?.trim()?.lowercase()) {
+            null, "", "none", "unset" -> UNSET
+            "off", "false" -> OFF
+            "on", "true" -> ON
+            "stage", "per-stage", "per_stage", "validation" -> PER_STAGE
+            else -> UNSET
+        }
+    }
+}
 
 internal val llmJson = Json {
     ignoreUnknownKeys = true

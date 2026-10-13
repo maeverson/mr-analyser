@@ -183,6 +183,62 @@ class LlmProviderTest {
         assertTrue(body.contains("\"num_predict\":4096"))
     }
 
+    @Test
+    fun `ollama nao deve enviar think quando o modo nao esta configurado`() = runBlocking {
+        server.stubFor(
+            post(urlPathEqualTo("/api/generate")).willReturn(aResponse().withBody("""{"response":"ok","done":true}"""))
+        )
+
+        OllamaLlmProvider(model = "m", baseUrl = baseUrl()).complete(request.copy(reasoning = true))
+
+        assertFalse(server.allServeEvents.single().request.bodyAsString.contains("\"think\""))
+    }
+
+    @Test
+    fun `ollama por etapa deve pensar so onde a etapa pede e somar o orcamento de raciocinio`() = runBlocking {
+        server.stubFor(
+            post(urlPathEqualTo("/api/generate")).willReturn(aResponse().withBody("""{"response":"ok","done":true}"""))
+        )
+        val provider = OllamaLlmProvider(
+            model = "qwen3:14b",
+            baseUrl = baseUrl(),
+            settings = LlmTransportSettings(
+                thinking = com.mranalyser.infrastructure.llm.ThinkingMode.PER_STAGE,
+                reasoningTokens = 4_000
+            )
+        )
+
+        provider.complete(request.copy(maxOutputTokens = 3_000, reasoning = false))
+        provider.complete(request.copy(maxOutputTokens = 3_000, reasoning = true))
+
+        val (volume, validation) = server.allServeEvents.map { it.request.bodyAsString }.reversed()
+        assertTrue(volume.contains("\"think\":false"))
+        assertTrue(volume.contains("\"num_predict\":3000"))
+        assertTrue(validation.contains("\"think\":true"))
+        assertTrue(validation.contains("\"num_predict\":7000"))
+    }
+
+    @Test
+    fun `resposta vazia apos raciocinio deve apontar o orcamento`() = runBlocking {
+        server.stubFor(
+            post(urlPathEqualTo("/api/generate")).willReturn(
+                aResponse().withBody(
+                    """{"response":"","thinking":"pensando...","done":false}""" + "\n" +
+                        """{"response":"","thinking":" mais","done":true}"""
+                )
+            )
+        )
+
+        val response = OllamaLlmProvider(
+            model = "qwen3:14b",
+            baseUrl = baseUrl(),
+            settings = LlmTransportSettings(thinking = com.mranalyser.infrastructure.llm.ThinkingMode.ON)
+        ).complete(request)
+
+        assertFalse(response.successful)
+        assertTrue(response.failure!!.contains("MR_ANALYSER_LLM_REASONING_TOKENS"))
+    }
+
     /**
      * O streaming é o que permite geração longa em modelo self-hosted: o critério de falha passa a
      * ser o servidor parar de responder, não a duração total da geração.

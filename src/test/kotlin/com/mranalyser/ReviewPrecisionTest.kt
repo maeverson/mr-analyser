@@ -166,6 +166,19 @@ class ReviewPrecisionTest {
     }
 
     @Test
+    fun `titulo identico em arquivos diferentes e o mesmo problema`() {
+        val inMapper = finding(evidence = "a", title = "Possível inconsistência ao resolver o nome do plano")
+            .copy(file = "src/domains/companies/mappers/company-list-item.mapper.ts", line = 145)
+        val inAdapter = finding(evidence = "b", title = "Possível inconsistência ao resolver o nome do plano")
+        val unrelated = finding(evidence = "c", title = "Timeout padrão curto para o Product Core")
+            .copy(file = "src/config/env.schema.ts", line = 7)
+
+        val result = FindingDeduplicator().analyse(listOf(inMapper, inAdapter, unrelated), emptyList())
+
+        assertEquals(2, result.findings.size)
+    }
+
+    @Test
     fun `mesmo titulo em trechos distantes do arquivo nao e duplicata`() {
         val result = FindingDeduplicator().analyse(
             listOf(finding(evidence = "a", line = 10), finding(evidence = "b", line = 90)),

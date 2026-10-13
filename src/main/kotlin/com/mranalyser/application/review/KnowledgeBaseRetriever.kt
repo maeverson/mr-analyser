@@ -74,7 +74,8 @@ class KnowledgeBaseRetriever(
         }
 
         val excerpts = select(result.documents, repository)
-        diagnostics.knowledgeSources = excerpts.map { it.source }
+        // Vários trechos do mesmo documento são úteis no prompt, mas a fonte se lista uma vez.
+        diagnostics.knowledgeSources = excerpts.map { it.source }.distinct()
         if (excerpts.isEmpty()) {
             diagnostics.skipStage(STAGE, "nenhum documento do repositório '$repository' encontrado")
         } else {

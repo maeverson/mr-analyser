@@ -39,7 +39,10 @@ class ConfigLoader {
                     ?.toInt() ?: 6_000,
                 maxOutputTokensAssessment = source.number("MR_ANALYSER_LLM_MAX_TOKENS_ASSESSMENT", "llm", "maxOutputTokensAssessment")
                     ?.toInt() ?: 2_000,
-                numCtx = source.number("MR_ANALYSER_LLM_NUM_CTX", "llm", "numCtx")?.toInt()
+                numCtx = source.number("MR_ANALYSER_LLM_NUM_CTX", "llm", "numCtx")?.toInt(),
+                thinking = source.text("MR_ANALYSER_LLM_THINKING", "llm", "thinking") ?: "none",
+                reasoningTokens = source.number("MR_ANALYSER_LLM_REASONING_TOKENS", "llm", "reasoningTokens")
+                    ?.toInt()?.coerceAtLeast(0) ?: 4_000
             ),
             review = ReviewConfig(
                 ignoredPaths = source.list("review", "ignoredPaths"),

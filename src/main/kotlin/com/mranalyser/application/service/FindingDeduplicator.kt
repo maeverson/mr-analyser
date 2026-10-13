@@ -24,7 +24,8 @@ class FindingDeduplicator(
     private val nearbyLines: Int = 5,
     private val sameAreaLines: Int = 15,
     private val statementThreshold: Double = 0.5,
-    private val restatementThreshold: Double = 0.6
+    private val restatementThreshold: Double = 0.6,
+    private val sameTitleAnywhere: Double = 0.9
 ) {
     data class Result(
         val findings: List<ReviewFinding>,
@@ -106,8 +107,11 @@ class FindingDeduplicator(
         candidate: ReviewFinding,
         candidateTokens: Set<String>
     ): Boolean {
+        val sameTitle = jaccard(tokens(existing.title), tokens(candidate.title)) >= sameTitleAnywhere
         if (existing.file != candidate.file) {
-            return false
+            // O mesmo problema relatado a partir de dois arquivos (o mapper e o adapter que o
+            // alimenta) chega com título idêntico; o prompt pede um finding por problema.
+            return sameTitle
         }
         val distance = if (existing.line != null && candidate.line != null) {
             kotlin.math.abs(existing.line - candidate.line)
@@ -152,7 +156,9 @@ class FindingDeduplicator(
         recommendation = winner.recommendation ?: duplicate.recommendation,
         suggestedComment = winner.suggestedComment ?: duplicate.suggestedComment,
         componentsAffected = (winner.componentsAffected + duplicate.componentsAffected).distinct(),
-        relatedFiles = (winner.relatedFiles + duplicate.relatedFiles).distinct()
+        // Duplicata de outro arquivo: o local continua visível como arquivo relacionado.
+        relatedFiles = (winner.relatedFiles + listOfNotNull(duplicate.file.takeIf { it != winner.file }) +
+            duplicate.relatedFiles).distinct()
     )
 
     /** A frase está contida no título ou na descrição de algum dos findings? */

@@ -32,7 +32,10 @@ data class LlmConfig(
      * as camadas, e o servidor passa a rodar parte do modelo na CPU — uma diferença medida de
      * 5,9 para 31,6 tok/s em um 14B Q4 numa RTX 3060.
      */
-    val numCtx: Int? = null
+    val numCtx: Int? = null,
+    /** `none` (não envia), `off`, `stage` (só na validação) ou `on`. Ver [com.mranalyser.infrastructure.llm.ThinkingMode]. */
+    val thinking: String = "none",
+    val reasoningTokens: Int = 4_000
 )
 
 data class ReviewConfig(

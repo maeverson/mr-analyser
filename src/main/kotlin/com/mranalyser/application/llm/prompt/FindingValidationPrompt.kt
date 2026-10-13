@@ -78,7 +78,8 @@ class FindingValidationPrompt(
         },
         maxOutputTokens = maxOutputTokens,
         temperature = 0.0,
-        label = "validação de ${input.candidates.size} candidatos"
+        label = "validação de ${input.candidates.size} candidatos",
+        reasoning = true
     )
 
     /**
