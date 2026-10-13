@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_HOME="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+APP_LAUNCHER="$APP_HOME/build/install/mr-analyser/bin/mr-analyser"
+
+is_java_21() {
+    local java=$1
+    [[ -x "$java" ]] && "$java" -version 2>&1 | grep -Eq 'version "21([.]|")'
+}
+
+find_java_21() {
+    local candidate
+
+    if [[ -n "${JAVA_HOME:-}" ]] && is_java_21 "$JAVA_HOME/bin/java"; then
+        printf '%s\n' "$JAVA_HOME"
+        return 0
+    fi
+
+    for candidate in /usr/lib/jvm/*21* "$HOME"/.gradle/jdks/*21* "$HOME"/.jdks/*21*; do
+        if [[ -x "$candidate/bin/java" ]] && is_java_21 "$candidate/bin/java"; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+
+    if command -v java >/dev/null 2>&1 && is_java_21 "$(command -v java)"; then
+        dirname -- "$(dirname -- "$(command -v java)")"
+        return 0
+    fi
+
+    return 1
+}
+
+if [[ ! -x "$APP_LAUNCHER" ]]; then
+    "$APP_HOME/gradlew" -p "$APP_HOME" installDist
+fi
+
+if ! JAVA_HOME="$(find_java_21)"; then
+    echo "Não foi possível localizar um JDK 21 para executar o mr-analyser." >&2
+    echo "Execute ./gradlew installDist para provisionar o JDK 21 e tente novamente." >&2
+    exit 1
+fi
+
+export JAVA_HOME
+export PATH="$JAVA_HOME/bin:$PATH"
+exec "$APP_LAUNCHER" "$@"

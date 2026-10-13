@@ -89,6 +89,16 @@ padrão do sistema. Se não houver um JDK 21 instalado, ele será baixado automa
 ./gradlew clean build
 ```
 
+Para executar a ferramenta sem chamar `./gradlew run`, use o launcher local. Na primeira
+execução, ele gera a distribuição automaticamente:
+
+```bash
+./mr-analyser analyse --url https://gitlab.com/grupo/projeto/-/merge_requests/123
+```
+
+O launcher usa JDK 21 mesmo que a versão padrão do sistema seja outra. Depois de atualizar
+o código, execute `./gradlew installDist` para atualizar a distribuição instalada.
+
 ## Configuração
 
 Origem, em ordem de precedência:
