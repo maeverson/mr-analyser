@@ -4,6 +4,9 @@ import com.mranalyser.application.port.LlmProvider
 import com.mranalyser.application.port.LlmRequest
 import com.mranalyser.application.port.LlmResponse
 import org.slf4j.LoggerFactory
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.nanoseconds
 
@@ -33,7 +36,20 @@ class ProgressLoggingLlmProvider(
         logger.info("[{}] {} -> enviando...", request.purpose.label, target)
 
         val started = clock()
-        val response = delegate.complete(request)
+        val response = coroutineScope {
+            val heartbeat = launch {
+                while (true) {
+                    delay(30_000)
+                    logger.info("[{}] {} -> aguardando resposta há {}...",
+                        request.purpose.label, target, format((clock() - started).nanoseconds))
+                }
+            }
+            try {
+                delegate.complete(request)
+            } finally {
+                heartbeat.cancel()
+            }
+        }
         val elapsed = (clock() - started).nanoseconds
 
         if (!response.successful) {

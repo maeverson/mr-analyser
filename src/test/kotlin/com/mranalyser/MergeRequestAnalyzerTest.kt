@@ -56,7 +56,20 @@ class MergeRequestAnalyzerTest {
         val analyzer = TestAnalyzer.build(
             FakeLlmProvider.replying(
                 LlmPurpose.UNDERSTANDING to FakeLlmResponses.understanding(),
-                LlmPurpose.LOCAL_REVIEW to FakeLlmResponses.localReview(),
+                // Evidência ancorada no diff do MR: o descarte precisa vir da validação, não da
+                // checagem de evidência inexistente.
+                LlmPurpose.LOCAL_REVIEW to FakeLlmResponses.localReview(
+                    findingsJson = """
+                        {
+                          "type": "RISK", "severity": "MEDIUM", "category": "BUSINESS_RULE",
+                          "file": "src/main/kotlin/orders/domain/CouponValidator.kt", "line": 11,
+                          "title": "Validação de cupom ignora data de expiração",
+                          "description": "validate() só verifica isActive.",
+                          "evidence": "CouponValidator.kt:11 chama require() apenas com coupon.isActive.",
+                          "confidence": 0.8
+                        }
+                    """.trimIndent()
+                ),
                 LlmPurpose.VALIDATION to FakeLlmResponses.validation(
                     FakeLlmResponses.verdict("F1", "DISCARD")
                 ),

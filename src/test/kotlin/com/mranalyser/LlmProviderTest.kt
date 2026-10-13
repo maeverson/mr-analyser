@@ -144,6 +144,27 @@ class LlmProviderTest {
     }
 
     @Test
+    fun `factory deve respeitar timeout do ollama sem repetir a geracao`() = runBlocking {
+        server.stubFor(
+            post(urlPathEqualTo("/api/generate")).willReturn(
+                aResponse().withFixedDelay(2_500)
+                    .withBody("""{"response":"ok","done":true}""")
+            )
+        )
+        val loaded = com.mranalyser.infrastructure.config.ConfigLoader()
+            .load(false, false, "ollama", "m")
+        val config = loaded.copy(llm = loaded.llm.copy(
+            url = baseUrl(), timeoutSeconds = 1, maxRetries = 2
+        ))
+        val response = com.mranalyser.infrastructure.config.AnalyzerFactory
+            .createLlmProvider(config).complete(request)
+
+        assertFalse(response.successful)
+        assertTrue(response.failure!!.contains("timeout", ignoreCase = true))
+        assertEquals(1, server.allServeEvents.size)
+    }
+
+    @Test
     fun `ollama deve enviar system e limite de tokens`() = runBlocking {
         server.stubFor(
             post(urlPathEqualTo("/api/generate")).willReturn(
@@ -285,6 +306,21 @@ class LlmProviderTest {
 
         assertFalse(response.successful)
         assertTrue(response.failure!!.contains("indisponível"))
+    }
+
+    @Test
+    fun `cancelamento deve interromper chamada em vez de virar falha recuperavel`() = runBlocking {
+        val cancellation = kotlinx.coroutines.CancellationException("interrompido")
+        val thrown = org.junit.jupiter.api.Assertions.assertThrows(
+            kotlinx.coroutines.CancellationException::class.java
+        ) {
+            runBlocking {
+                com.mranalyser.infrastructure.llm.safeCompletion("ollama:m") {
+                    throw cancellation
+                }
+            }
+        }
+        assertEquals(cancellation, thrown)
     }
 
     @Test

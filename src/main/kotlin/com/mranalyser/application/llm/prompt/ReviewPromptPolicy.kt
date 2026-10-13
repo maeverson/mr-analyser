@@ -45,6 +45,12 @@ ANTI-HALLUCINATION RULES (highest priority — they override every other instruc
 - Do not report problems in code that this MR did not touch unless you explicitly mark it as
   pre-existing technical debt.
 - When you are uncertain, prefer producing NO finding over a speculative one.
+- Never cite a method, class, file or line that does not appear verbatim in the material shown.
+  Text inside <angle brackets> in these instructions is a placeholder, not code from this MR.
+- Do not describe persistence, transactions, payments or any other mechanism the shown code does
+  not contain. A read-only HTTP call has no "local save" that can fail.
+- Never reuse sentences from these instructions in your answer. Every sentence must be about the
+  code of this MR.
 """.trim()
 
     /** Item 3. */
@@ -92,14 +98,13 @@ CONFIDENCE — a calibrated number, not a rhetorical device:
     /** Itens 9 e 10. */
     val EVIDENCE_REQUIREMENT = """
 EVIDENCE — mandatory for every finding at MEDIUM severity or above:
-- "evidence": a verifiable fact, quoting the file, the line and what the code actually does.
-  Example: "InvoiceService.kt:84 chama paymentGateway.capture() antes de repository.save()".
+- "evidence": a verifiable fact in the form "<file>:<line> <what the code on that line does>",
+  using only identifiers that appear in the diff or related context.
   It must be checkable in seconds by the reviewer. Do not paraphrase your own conclusion here.
 - "failureScenario": the concrete ordered sequence that leads to the failure. Required for
   BUG / RELIABILITY / CONCURRENCY / TRANSACTION / DATA_CONSISTENCY / PERFORMANCE / SECURITY
-  whenever it can be described. Format as numbered steps, ending with the resulting bad state.
-  Example: "1. capture() retorna sucesso; 2. repository.save() falha; 3. pagamento efetuado
-  externamente sem registro local".
+  whenever it can be described. Format: "1. <step> 2. <step> 3. <resulting bad state>", where
+  every step is something the shown code actually does.
 If you cannot produce evidence, the item is a QUESTION, not a finding.
 """.trim()
 
@@ -118,10 +123,9 @@ SUGGESTED COMMENT ("suggestedComment") — this is one of the most important out
 Write it in Brazilian Portuguese, as a real senior engineer would type it into GitLab.
 It must NOT read like an AI report or an audit finding.
 
-Do not write:  "Foi identificado potencial problema de consistência de dados..."
-Write like:    "Neste fluxo chamamos capture() antes de persistir a invoice. Como garantimos
-                consistência caso o pagamento seja confirmado e o save() falhe depois?
-                Talvez valha tratar esse cenário explicitamente ou garantir idempotência."
+Do not write impersonal audit prose ("Foi identificado potencial problema de...").
+Structure: <what this specific code does, naming its real identifiers> + <the concrete risk or
+the question> + <a direction to consider>.
 
 Rules for the comment:
 - explain the point, show the reasoning briefly;
@@ -140,7 +144,11 @@ DO NOT produce findings or GitLab comments for:
 - hypothetical abstractions or design patterns with no concrete benefit;
 - micro-optimisations without a described scale at which they matter;
 - changes outside the scope of this MR (unless flagged as pre-existing debt);
-- generic advice such as "adicionar mais testes" or "melhorar o tratamento de erros".
+- generic advice such as "adicionar mais testes" or "melhorar o tratamento de erros";
+- "this default may be too low/high" (timeouts, retries, limits, pool sizes) without a concrete
+  fact in the shown material that makes the value wrong for this system;
+- severity words ("segurança", "crítico") the evidence does not support — a type assertion is
+  not a security problem.
 Code review is not an opportunity to redesign the system.
 Prefer 4 excellent findings over 20 shallow ones. An empty findings list is a valid, good answer.
 """.trim()
@@ -189,8 +197,7 @@ TESTS: do not just check whether test files changed. Ask whether the new behavio
   protected, and name the missing scenario concretely: happy path, boundary condition, external
   failure, invalid state, duplication, concurrency, retry, unexpected error.
   Bad:  "Adicionar mais testes."
-  Good: "Não identifiquei teste cobrindo o cenário em que o provider confirma e o save() falha.
-         Nesse caso a invoice permaneceria ativa?"
+  Good: name the exact untested scenario of THIS change and the state it would leave behind.
 """.trim()
 
     val LANGUAGE = """

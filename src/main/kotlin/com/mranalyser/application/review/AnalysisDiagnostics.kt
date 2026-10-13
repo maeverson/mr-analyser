@@ -35,7 +35,14 @@ class AnalysisDiagnostics {
     var discardedAsNoise: Int = 0
 
     @Volatile
+    var discardedAsUngrounded: Int = 0
+
+    @Volatile
     var relatedContextsLoaded: Int = 0
+
+    /** Documentos da base de conhecimento usados nos prompts, para o revisor conferir a fonte. */
+    @Volatile
+    var knowledgeSources: List<String> = emptyList()
 
     @Synchronized
     fun chunkSucceeded() {

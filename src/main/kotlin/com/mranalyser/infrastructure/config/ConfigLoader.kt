@@ -52,7 +52,10 @@ class ConfigLoader {
                 understandingEnabled = source.flag("MR_ANALYSER_STAGE_UNDERSTANDING", "review", "understandingEnabled") ?: true,
                 validationEnabled = source.flag("MR_ANALYSER_STAGE_VALIDATION", "review", "validationEnabled") ?: true,
                 crossFileEnabled = source.flag("MR_ANALYSER_STAGE_CROSS_FILE", "review", "crossFileEnabled") ?: true,
-                finalAssessmentEnabled = source.flag("MR_ANALYSER_STAGE_ASSESSMENT", "review", "finalAssessmentEnabled") ?: true
+                finalAssessmentEnabled = source.flag("MR_ANALYSER_STAGE_ASSESSMENT", "review", "finalAssessmentEnabled") ?: true,
+                skillsPath = source.text("MR_ANALYSER_SKILLS_PATH", "review", "skillsPath"),
+                maxSkillChars = source.number("MR_ANALYSER_SKILLS_MAX_CHARS", "review", "maxSkillChars")
+                    ?.toInt()?.coerceAtLeast(0) ?: 6_000
             ),
             limits = LimitsConfig(
                 maxDiffLines = source.number("MR_ANALYSER_MAX_DIFF_LINES", "limits", "maxDiffLines")?.toInt() ?: 2_500,
@@ -71,7 +74,18 @@ class ConfigLoader {
             ),
             maxConcurrency = (source.number("MR_ANALYSER_MAX_CONCURRENCY", "maxConcurrency")?.toInt() ?: 4)
                 .coerceIn(1, 16),
-            verbose = verbose
+            verbose = verbose,
+            knowledgeBase = KnowledgeBaseConfig(
+                enabled = source.flag("MR_ANALYSER_KB_ENABLED", "knowledgeBase", "enabled") ?: true,
+                url = (source.text("MR_ANALYSER_KB_URL", "knowledgeBase", "url") ?: KnowledgeBaseConfig.DEFAULT_URL)
+                    .trimEnd('/'),
+                maxDocuments = source.number("MR_ANALYSER_KB_MAX_DOCS", "knowledgeBase", "maxDocuments")
+                    ?.toInt()?.coerceIn(1, 10) ?: 4,
+                maxChars = source.number("MR_ANALYSER_KB_MAX_CHARS", "knowledgeBase", "maxChars")
+                    ?.toInt()?.coerceAtLeast(0) ?: 3_500,
+                timeoutSeconds = source.number("MR_ANALYSER_KB_TIMEOUT_SECONDS", "knowledgeBase", "timeoutSeconds")
+                    ?.toLong()?.coerceAtLeast(1) ?: 20L
+            )
         )
     }
 

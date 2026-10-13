@@ -49,7 +49,8 @@ class FindingValidationStage(
         relatedContext: List<RelatedFileContext>,
         discussions: List<ExistingDiscussion>,
         parsedDiffs: Map<String, ParsedDiff>,
-        diagnostics: AnalysisDiagnostics
+        diagnostics: AnalysisDiagnostics,
+        knowledge: List<KnowledgeExcerpt> = emptyList()
     ): Outcome {
         if (candidates.isEmpty()) {
             return Outcome(emptyList(), discarded = 0, validated = true)
@@ -72,7 +73,8 @@ class FindingValidationStage(
                 discussions = discussions,
                 evidenceExcerpts = identified.mapNotNull { (id, finding) ->
                     excerptFor(finding, parsedDiffs)?.let { id to it }
-                }.toMap()
+                }.toMap(),
+                knowledge = knowledge
             )
 
             val response = llmProvider.complete(prompt.build(input, maxOutputTokens))

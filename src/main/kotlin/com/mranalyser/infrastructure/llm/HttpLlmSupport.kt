@@ -10,6 +10,7 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.isSuccess
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
+import kotlinx.coroutines.CancellationException
 
 /**
  * Configuração de transporte comum aos providers. A V1 tinha timeout infinito em Anthropic e
@@ -72,12 +73,13 @@ internal fun buildStreamingLlmHttpClient(settings: LlmTransportSettings): HttpCl
 
 /**
  * Executa a chamada convertendo qualquer exceção em [LlmResponse.failed]. Garante o contrato
- * da porta: o provider nunca lança.
+ * da porta para falhas de transporte. Cancelamento é propagado para interromper o pipeline.
  */
 internal suspend fun safeCompletion(
     providerName: String,
     block: suspend () -> LlmResponse
 ): LlmResponse = runCatching { block() }.getOrElse { throwable ->
+    if (throwable is CancellationException) throw throwable
     LlmResponse.failed("$providerName indisponível: ${throwable::class.simpleName}: ${throwable.message}")
 }
 

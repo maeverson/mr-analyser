@@ -44,7 +44,7 @@ class OllamaLlmProvider(
     private val apiKey: String? = null,
     // Inferência self-hosted em diffs grandes é significativamente mais lenta. Aqui o valor é o
     // limite de ociosidade entre tokens, não a duração total permitida.
-    private val settings: LlmTransportSettings = LlmTransportSettings(timeoutSeconds = 600)
+    private val settings: LlmTransportSettings = LlmTransportSettings()
 ) : LlmProvider {
     override val name: String = "ollama:$model"
 

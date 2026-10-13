@@ -121,11 +121,14 @@ data class AnalysisQuality(
     val chunksAnalysed: Int = 0,
     val chunksFailed: Int = 0,
     val relatedContextsLoaded: Int = 0,
+    val knowledgeSources: List<String> = emptyList(),
     val candidateFindings: Int = 0,
     val discardedByDeduplication: Int = 0,
     val discardedByValidation: Int = 0,
     val discardedByConfidence: Int = 0,
     val discardedAsNoise: Int = 0,
+    /** Evidência citava método ou arquivo inexistente no diff e no contexto. */
+    val discardedAsUngrounded: Int = 0,
     val presentedFindings: Int = 0,
     val skippedStages: List<String> = emptyList(),
     val warnings: List<String> = emptyList()

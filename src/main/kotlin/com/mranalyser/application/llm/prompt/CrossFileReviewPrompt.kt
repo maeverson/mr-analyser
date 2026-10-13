@@ -1,5 +1,7 @@
 package com.mranalyser.application.llm.prompt
 
+import com.mranalyser.application.llm.skill.ReviewSkillCatalog
+import com.mranalyser.application.llm.skill.SkillTarget
 import com.mranalyser.application.port.LlmPurpose
 import com.mranalyser.application.port.LlmRequest
 import com.mranalyser.application.review.CrossFileReviewInput
@@ -12,7 +14,8 @@ import com.mranalyser.application.review.CrossFileReviewInput
  * Repository, Producer→Evento→Consumer, Migration→Entidade→Repository.
  */
 class CrossFileReviewPrompt(
-    private val sections: PromptSections = PromptSections()
+    private val sections: PromptSections = PromptSections(),
+    private val skills: ReviewSkillCatalog = ReviewSkillCatalog.EMPTY
 ) {
     fun build(input: CrossFileReviewInput, maxOutputTokens: Int): LlmRequest = LlmRequest(
         purpose = LlmPurpose.CROSS_FILE_REVIEW,
@@ -30,6 +33,10 @@ class CrossFileReviewPrompt(
         user = buildString {
             appendLine(TASK)
             appendLine()
+            skillsFor(input).takeIf { it.isNotBlank() }?.let {
+                appendLine(it)
+                appendLine()
+            }
             appendLine(sections.mergeRequestHeader(input.overview))
             sections.understanding(input.understanding).takeIf { it.isNotBlank() }?.let {
                 appendLine()
@@ -62,6 +69,13 @@ class CrossFileReviewPrompt(
         maxOutputTokens = maxOutputTokens,
         temperature = 0.1,
         label = "cross-file (${input.overview.files.size} arquivos)"
+    )
+
+    private fun skillsFor(input: CrossFileReviewInput): String = skills.render(
+        LlmPurpose.CROSS_FILE_REVIEW,
+        input.overview.files.map { file ->
+            SkillTarget(file.path, file.group, input.addedLinesByFile[file.path].orEmpty())
+        }
     )
 
     private fun relations(input: CrossFileReviewInput): String {

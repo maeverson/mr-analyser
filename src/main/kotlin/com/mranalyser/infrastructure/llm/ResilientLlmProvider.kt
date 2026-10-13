@@ -49,6 +49,11 @@ class ResilientLlmProvider(
         if (failure == null) {
             return false
         }
+        // Repetir uma inferência local que esgotou o timeout só prolonga a espera e
+        // pode enfileirar outra geração no mesmo runner.
+        if (name.startsWith("ollama:") && failure.contains("timeout", ignoreCase = true)) {
+            return false
+        }
         if (PERMANENT_MARKERS.any { failure.contains(it, ignoreCase = true) }) {
             return false
         }

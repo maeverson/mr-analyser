@@ -28,6 +28,12 @@ review:
   crossFileEnabled: true          # problemas visíveis só entre dois arquivos
   finalAssessmentEnabled: true    # parecer técnico executivo
 
+  # Skills de revisão do time (Markdown com frontmatter). Sem valor, usa
+  # .mranalyser/skills.md do diretório atual, se existir. Ver skills/review-skills.md.
+  # skillsPath: /caminho/absoluto/mr-analyser/skills/review-skills.md
+  # Teto de caracteres de skills por prompt. Sai do mesmo num_ctx do diff no Ollama.
+  maxSkillChars: 6000
+
 limits:
   # Linhas de diff anotado por chunk enviado ao modelo.
   maxDiffLines: 2500
@@ -62,6 +68,14 @@ llm:
   maxOutputTokensAssessment: 2000  # entendimento e parecer final
 
 maxConcurrency: 4
+
+# Base de conhecimento de engenharia. Requer `mr-analyser kb login` uma vez.
+knowledgeBase:
+  enabled: true
+  # url: https://processos.ctbz.com.br/mcp/base-conhecimento
+  maxDocuments: 4
+  maxChars: 3500          # sai do mesmo num_ctx do diff no Ollama
+  timeoutSeconds: 20
 
 # Exemplo self-hosted:
 # llm:

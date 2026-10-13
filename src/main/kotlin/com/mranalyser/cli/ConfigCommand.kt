@@ -34,6 +34,8 @@ class ConfigShowCommand : CliktCommand(name = "show") {
         echo("review.maxFindings=${config.review.maxFindings}")
         echo("review.ignoredCategories=${config.review.ignoredCategories.ifEmpty { "<none>" }}")
         echo("review.ignoredPaths=${config.review.ignoredPaths.ifEmpty { listOf("<none>") }}")
+        echo("review.skillsPath=${config.review.skillsPath ?: "<.mranalyser/skills.md, se existir>"}")
+        echo("review.maxSkillChars=${config.review.maxSkillChars}")
         echo()
         echo("etapas: entendimento=${config.review.understandingEnabled}" +
             " validacao=${config.review.validationEnabled}" +
@@ -48,6 +50,11 @@ class ConfigShowCommand : CliktCommand(name = "show") {
         echo()
         echo("limits.maxDiffLines=${config.limits.maxDiffLines}")
         echo("limits.maxFileLines=${config.limits.maxFileLines}")
+        echo()
+        echo("knowledgeBase.enabled=${config.knowledgeBase.enabled}")
+        echo("knowledgeBase.url=${config.knowledgeBase.url}")
+        echo("knowledgeBase.maxDocuments=${config.knowledgeBase.maxDocuments}")
+        echo("knowledgeBase.maxChars=${config.knowledgeBase.maxChars}")
     }
 
     private fun mask(value: String?): String {

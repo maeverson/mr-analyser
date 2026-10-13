@@ -2,6 +2,7 @@ package com.mranalyser.application.llm.prompt
 
 import com.mranalyser.application.port.LlmPurpose
 import com.mranalyser.application.port.LlmRequest
+import com.mranalyser.application.review.KnowledgeExcerpt
 import com.mranalyser.application.review.MergeRequestOverview
 import com.mranalyser.domain.model.ArchitecturalSignal
 
@@ -19,7 +20,8 @@ class UnderstandingPrompt(
         overview: MergeRequestOverview,
         signals: List<ArchitecturalSignal>,
         diffDigest: String,
-        maxOutputTokens: Int
+        maxOutputTokens: Int,
+        knowledge: List<KnowledgeExcerpt> = emptyList()
     ): LlmRequest = LlmRequest(
         purpose = LlmPurpose.UNDERSTANDING,
         system = ReviewPromptPolicy.systemPrompt(SYSTEM_EXTRA),
@@ -34,6 +36,12 @@ class UnderstandingPrompt(
             sections.architecturalSignals(signals).takeIf { it.isNotBlank() }?.let {
                 appendLine()
                 appendLine(it)
+            }
+            sections.knowledgeBase(knowledge).takeIf { it.isNotBlank() }?.let {
+                appendLine()
+                appendLine(it)
+                appendLine()
+                appendLine(KNOWLEDGE_TASK)
             }
             appendLine()
             appendLine("## RESUMO DAS ALTERAÇÕES (linhas adicionadas por arquivo)")
@@ -72,6 +80,13 @@ evidence. If the description claims one thing and the diff does something else, 
 "narrative" must be 2 to 4 sentences of flowing prose in Brazilian Portuguese, in the style of a
 senior engineer explaining the change to a colleague. Describe what changed and where the effect
 lands. Do not list files. Do not judge quality here.
+""".trim()
+
+        val KNOWLEDGE_TASK = """
+With the documents above: compare what the diff implements against the documented contract or
+decision (endpoint, fields, error codes, sources, rules). Report a concrete mismatch in
+"intentDiscrepancy", naming the document (D1, D2...) and its status. Do not report a mismatch
+you cannot see in the summary of added lines.
 """.trim()
 
         val SCHEMA = """
