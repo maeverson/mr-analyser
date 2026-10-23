@@ -3,10 +3,12 @@ package com.mranalyser.cli
 import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.parameters.arguments.argument
 import com.github.ajalt.clikt.parameters.arguments.optional
+import com.github.ajalt.clikt.parameters.groups.provideDelegate
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
 import com.mranalyser.application.port.MergeRequestProvider
 import com.mranalyser.application.usecase.AnalyseMergeRequestUseCase
+import com.mranalyser.application.usecase.PublishReviewUseCase
 import com.mranalyser.domain.model.FileChange
 import com.mranalyser.domain.model.MergeRequest
 import com.mranalyser.application.llm.skill.PathGlob
@@ -15,7 +17,10 @@ import com.mranalyser.infrastructure.config.ConfigLoader
 import com.mranalyser.infrastructure.gitlab.GitLabApiException
 import com.mranalyser.infrastructure.gitlab.GitLabClient
 import com.mranalyser.infrastructure.gitlab.GitLabMergeRequestProvider
+import com.mranalyser.infrastructure.gitlab.GitLabMergeRequestPublisher
 import com.mranalyser.infrastructure.gitlab.GitLabUrlParser
+import com.mranalyser.infrastructure.render.CommentPlanBuilder
+import com.mranalyser.infrastructure.render.CommentPlanFileStore
 import com.mranalyser.infrastructure.render.ConsoleReportRenderer
 import com.mranalyser.infrastructure.render.GitLabCommentRenderer
 import com.mranalyser.infrastructure.render.JsonReportRenderer
@@ -49,6 +54,11 @@ class AnalyseCommand : CliktCommand(name = "analyse") {
         "--fast",
         help = "Executa apenas o review local, sem entendimento, validacao, cross-file e parecer"
     ).flag(default = false)
+    private val publish by option(
+        "--publish",
+        help = "Ao final, oferece a publicação dos comentários no MR (veja também --select, --approve, --yes)"
+    ).flag(default = false)
+    private val publishOptions by PublishOptions()
 
     override fun run() = runBlocking {
         var gitLabClient: GitLabClient? = null
@@ -82,8 +92,9 @@ class AnalyseCommand : CliktCommand(name = "analyse") {
 
             val (resolvedProject, resolvedMr, resolvedHost) = resolveTarget(project, effectiveMr, effectiveUrl)
 
+            val gitlabUrl = resolvedHost ?: config.gitlabUrl
             gitLabClient = GitLabClient(
-                gitlabUrl = resolvedHost ?: config.gitlabUrl,
+                gitlabUrl = gitlabUrl,
                 token = config.gitlabToken
             )
 
@@ -145,9 +156,23 @@ class AnalyseCommand : CliktCommand(name = "analyse") {
                 extension = if (isJson) ".json" else ".md"
             )
 
+            val plan = CommentPlanBuilder().build(mrData, report, gitlabUrl)
+            val planPath = CommentPlanFileStore().writeNextTo(reportPath, plan)
+
             echo(renderedReport)
             echo()
             echo("Relatório salvo em: $reportPath")
+
+            if (publish) {
+                PublishFlow(
+                    useCase = PublishReviewUseCase(GitLabMergeRequestPublisher(gitLabClient)),
+                    echo = { echo(it) },
+                    readInput = { prompt -> print(prompt); System.out.flush(); readlnOrNull() }
+                ).run(plan, publishOptions)
+            } else {
+                echo("Comentários sugeridos: $planPath")
+                echo("Para escolher e publicar no MR: mr-analyser publish ${effectiveUrl ?: resolvedMr}")
+            }
         } catch (exception: GitLabApiException) {
             System.err.println(friendlyGitLabError(exception))
         } catch (exception: IllegalStateException) {

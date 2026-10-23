@@ -76,6 +76,40 @@ QUALIDADE DA ANÁLISE      inclui o sinal agregado (APPROVE … REQUEST_CHANGES)
 
 Categorias vazias não são impressas.
 
+## Publicação no MR
+
+A análise nunca publica nada sozinha. Ao final, `analyse` grava os comentários candidatos em
+`reports/mr-<iid>-<timestamp>.comments.json`, ao lado do relatório, e você decide depois de ler:
+
+```bash
+mr-analyser publish <url-do-mr>            # lista numerada; você escolhe: 1,3-5 · all · none
+mr-analyser publish 132 --dry-run          # mostra o texto exato que seria publicado
+mr-analyser analyse <url> --publish        # analisa e já oferece a escolha
+```
+
+Cada finding vira um comentário na linha do diff. Se o GitLab recusar a posição porque a linha
+saiu do diff, ele vai para a thread geral com a localização no texto. Também ficam disponíveis
+as perguntas ao autor, os pontos positivos, a dívida pré-existente e um comentário geral com o
+parecer. Na escolha interativa, `ver N` mostra o texto completo; responder vazio publica nada.
+
+Publicação e aprovação automáticas acontecem só quando pedidas:
+
+```bash
+mr-analyser publish 132 --select all --approve --yes
+mr-analyser analyse <url> --publish --select 1,2 --yes
+```
+
+Proteções:
+
+- `--approve` é a única forma de aprovar. A aprovação vai fixada no commit analisado, então o
+  GitLab a recusa se o MR recebeu commits depois.
+- Com `--yes`, a aprovação é recusada se a análise foi parcial (etapa do modelo falhou), se há
+  bloqueadores ou se o parecer é solicitar mudanças. Sem `--yes`, é preciso digitar `aprovar`.
+- Se o MR mudou desde a análise, a publicação pede confirmação, e com `--yes` não publica.
+- Cada comentário leva um marcador HTML invisível. Publicar de novo não duplica.
+
+Publicar exige `GITLAB_TOKEN` com escopo `api`. Para só analisar, `read_api` basta.
+
 ## Stack
 
 Kotlin · JVM 21 · Gradle Kotlin DSL · Ktor Client · kotlinx.serialization · Clikt ·
@@ -101,7 +135,7 @@ Origem, em ordem de precedência:
 
 ```properties
 GITLAB_URL=https://gitlab.com
-GITLAB_TOKEN=<token com permissão de leitura de MR>
+GITLAB_TOKEN=<token: read_api para analisar, api para publicar comentários/aprovar>
 
 MR_ANALYSER_LLM_PROVIDER=openai
 MR_ANALYSER_LLM_MODEL=gpt-4o-mini

@@ -3,6 +3,7 @@ package com.mranalyser.infrastructure.gitlab
 import com.mranalyser.application.port.MergeRequestProvider
 import com.mranalyser.domain.model.Author
 import com.mranalyser.domain.model.Commit
+import com.mranalyser.domain.model.DiffRefs
 import com.mranalyser.domain.model.Discussion
 import com.mranalyser.domain.model.DiscussionNote
 import com.mranalyser.domain.model.FileChange
@@ -34,6 +35,12 @@ class GitLabMergeRequestProvider(
             // antes de usar o context retrieval.
             projectPath = project,
             webUrl = mr.webUrl,
+            diffRefs = mr.diffRefs?.let { refs ->
+                val base = refs.baseSha ?: return@let null
+                val start = refs.startSha ?: return@let null
+                val head = refs.headSha ?: return@let null
+                DiffRefs(baseSha = base, startSha = start, headSha = head)
+            },
             changes = changes.changes.map { change ->
                 val (added, removed) = computeLineStats(change.diff)
                 FileChange(

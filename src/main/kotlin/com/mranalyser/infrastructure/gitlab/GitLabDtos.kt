@@ -22,7 +22,16 @@ data class GitLabMergeRequestDto(
     val labels: List<String> = emptyList(),
     val state: String? = null,
     val reviewers: List<GitLabUserDto> = emptyList(),
-    @SerialName("web_url") val webUrl: String? = null
+    @SerialName("web_url") val webUrl: String? = null,
+    val sha: String? = null,
+    @SerialName("diff_refs") val diffRefs: GitLabDiffRefsDto? = null
+)
+
+@Serializable
+data class GitLabDiffRefsDto(
+    @SerialName("base_sha") val baseSha: String? = null,
+    @SerialName("start_sha") val startSha: String? = null,
+    @SerialName("head_sha") val headSha: String? = null
 )
 
 @Serializable
@@ -85,4 +94,34 @@ data class GitLabPositionDto(
 @Serializable
 data class GitLabApprovalsDto(
     @SerialName("approvals_required") val approvalsRequired: Int? = null
+)
+
+@Serializable
+data class GitLabNoteRequest(
+    val body: String
+)
+
+@Serializable
+data class GitLabDiscussionRequest(
+    val body: String,
+    val position: GitLabNewPositionDto
+)
+
+/** Posição de um comentário de linha. Linha de contexto exige `old_line` e `new_line`. */
+@Serializable
+data class GitLabNewPositionDto(
+    /** Sem valor padrão: o Json do Ktor omite campos com default, e o GitLab exige este. */
+    @SerialName("position_type") val positionType: String,
+    @SerialName("base_sha") val baseSha: String,
+    @SerialName("start_sha") val startSha: String,
+    @SerialName("head_sha") val headSha: String,
+    @SerialName("old_path") val oldPath: String,
+    @SerialName("new_path") val newPath: String,
+    @SerialName("old_line") val oldLine: Int? = null,
+    @SerialName("new_line") val newLine: Int? = null
+)
+
+@Serializable
+data class GitLabApproveRequest(
+    val sha: String? = null
 )

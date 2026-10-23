@@ -66,7 +66,9 @@ data class MergeRequest(
     val commits: List<Commit>,
     val discussions: List<Discussion>,
     val projectPath: String? = null,
-    val webUrl: String? = null
+    val webUrl: String? = null,
+    /** Necessário para ancorar comentários em linhas do diff. */
+    val diffRefs: DiffRefs? = null
 )
 
 /**

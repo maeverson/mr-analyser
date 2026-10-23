@@ -6,6 +6,7 @@ import com.mranalyser.cli.ConfigCommand
 import com.mranalyser.cli.KbCommand
 import com.mranalyser.cli.withKbSubcommands
 import com.mranalyser.cli.MrAnalyserCli
+import com.mranalyser.cli.PublishCommand
 import com.mranalyser.cli.VersionCommand
 import com.mranalyser.cli.withSubcommands
 
@@ -13,6 +14,7 @@ fun main(args: Array<String>) {
     MrAnalyserCli()
         .subcommands(
             AnalyseCommand(),
+            PublishCommand(),
             ConfigCommand().withSubcommands(),
             KbCommand().withKbSubcommands(),
             VersionCommand()

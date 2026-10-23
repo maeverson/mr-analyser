@@ -2,10 +2,10 @@ package com.mranalyser.infrastructure.render
 
 import com.mranalyser.domain.model.CommentType
 import com.mranalyser.domain.model.MergeRequest
-import com.mranalyser.domain.model.ReviewFinding
 import com.mranalyser.domain.model.ReviewReport
 import com.mranalyser.domain.model.bucket
 import com.mranalyser.domain.model.ReviewBucket
+import com.mranalyser.domain.model.effectiveCommentType
 import com.mranalyser.domain.policy.NoisePolicy
 
 /**
@@ -26,7 +26,7 @@ class GitLabCommentRenderer(
         val commentable = report.findings
             .filter { it.bucket() != ReviewBucket.PRE_EXISTING }
             .filter { noisePolicy.deservesGitLabComment(it) }
-            .sortedByDescending { orderOf(it) }
+            .sortedByDescending { commentOrderOf(it.effectiveCommentType()) }
 
         if (commentable.isEmpty()) {
             sb.appendLine()
@@ -34,7 +34,7 @@ class GitLabCommentRenderer(
         } else {
             commentable.forEach { finding ->
                 sb.appendLine()
-                sb.appendLine("[${commentTypeOf(finding).name}]")
+                sb.appendLine("[${finding.effectiveCommentType().name}]")
                 sb.appendLine()
                 sb.appendLine(finding.location)
                 sb.appendLine()
@@ -96,23 +96,16 @@ class GitLabCommentRenderer(
         sb.appendLine(DIVIDER)
     }
 
-    private fun commentTypeOf(finding: ReviewFinding): CommentType =
-        finding.commentType ?: when (finding.bucket()) {
-            ReviewBucket.BLOCKING -> CommentType.BLOCKER
-            ReviewBucket.QUESTION -> CommentType.QUESTION
-            ReviewBucket.SUGGESTION -> CommentType.SUGGESTION
-            ReviewBucket.PRE_EXISTING -> CommentType.OBSERVATION
+    internal companion object {
+        /** Bloqueadores primeiro: é a ordem em que o autor precisa ler. */
+        fun commentOrderOf(type: CommentType): Int = when (type) {
+            CommentType.BLOCKER -> 4
+            CommentType.QUESTION -> 3
+            CommentType.SUGGESTION -> 2
+            CommentType.OBSERVATION -> 1
+            CommentType.PRAISE -> 0
         }
 
-    private fun orderOf(finding: ReviewFinding): Int = when (commentTypeOf(finding)) {
-        CommentType.BLOCKER -> 4
-        CommentType.QUESTION -> 3
-        CommentType.SUGGESTION -> 2
-        CommentType.OBSERVATION -> 1
-        CommentType.PRAISE -> 0
-    }
-
-    private companion object {
         const val DIVIDER = "────────────────────────────────────────────────────────"
     }
 }

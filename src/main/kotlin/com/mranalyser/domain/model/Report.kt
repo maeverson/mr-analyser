@@ -189,3 +189,11 @@ fun ReviewFinding.bucket(): ReviewBucket = when {
     type == FindingType.QUESTION || commentType == CommentType.QUESTION -> ReviewBucket.QUESTION
     else -> ReviewBucket.SUGGESTION
 }
+
+/** Tom do comentário no GitLab: o sugerido pelo modelo ou, na falta dele, o do bucket. */
+fun ReviewFinding.effectiveCommentType(): CommentType = commentType ?: when (bucket()) {
+    ReviewBucket.BLOCKING -> CommentType.BLOCKER
+    ReviewBucket.QUESTION -> CommentType.QUESTION
+    ReviewBucket.SUGGESTION -> CommentType.SUGGESTION
+    ReviewBucket.PRE_EXISTING -> CommentType.OBSERVATION
+}

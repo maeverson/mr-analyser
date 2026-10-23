@@ -8,6 +8,10 @@ import io.ktor.client.plugins.defaultRequest
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.client.request.get
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.http.ContentType
+import io.ktor.http.contentType
 import io.ktor.http.URLBuilder
 import io.ktor.http.isSuccess
 import io.ktor.http.takeFrom
@@ -60,6 +64,18 @@ class GitLabClient(
         }
     }
 
+    suspend fun createMergeRequestNote(project: String, iid: Long, request: GitLabNoteRequest) {
+        postJson(apiUrl("/projects/${encodeProject(project)}/merge_requests/$iid/notes"), request)
+    }
+
+    suspend fun createMergeRequestDiscussion(project: String, iid: Long, request: GitLabDiscussionRequest) {
+        postJson(apiUrl("/projects/${encodeProject(project)}/merge_requests/$iid/discussions"), request)
+    }
+
+    suspend fun approveMergeRequest(project: String, iid: Long, request: GitLabApproveRequest) {
+        postJson(apiUrl("/projects/${encodeProject(project)}/merge_requests/$iid/approve"), request)
+    }
+
     fun close() {
         client.close()
     }
@@ -84,5 +100,19 @@ class GitLabClient(
         }
 
         return response.body<T>()
+    }
+
+    private suspend inline fun <reified T> postJson(url: String, payload: T) {
+        val response: HttpResponse = client.post(url) {
+            contentType(ContentType.Application.Json)
+            setBody(payload)
+        }
+
+        if (!response.status.isSuccess()) {
+            throw GitLabApiException(
+                statusCode = response.status.value,
+                responseBody = response.bodyAsText()
+            )
+        }
     }
 }
